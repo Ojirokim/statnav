@@ -1,0 +1,1 @@
+"""StatNav - Statistical Inference Navigator"""

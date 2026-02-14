@@ -1,0 +1,90 @@
+flowchart TD
+A[Start] --> B{Goal?}
+
+%% =========================
+%% COMPARE
+%% =========================
+B -->|Compare groups| C{Outcome type?}
+
+%% ----- Continuous Outcome -----
+C -->|Continuous| D{Predictor type?}
+D -->|Continuous predictor| OLS[Linear Regression OLS]
+D -->|Categorical groups| E{Number of groups?}
+
+%% ---- 1 GROUP ----
+E -->|1 group vs constant| N1[Normality: Shapiro + Q-Q probplot]
+N1 -->|Fail| W1[Wilcoxon one sample]
+N1 -->|Pass| T1[One sample t test]
+
+%% ---- 2 GROUPS ----
+E -->|2 groups| F{Paired or independent?}
+
+F -->|Paired| N2[Normality of Differences]
+N2 -->|Fail| WP[Wilcoxon paired]
+N2 -->|Pass| PT[Paired t test]
+
+F -->|Independent| N3[Normality: Shapiro + Q-Q probplot]
+N3 -->|Fail| MW[Mann Whitney U]
+N3 -->|Pass| V1{Equal variances? Levene}
+V1 -->|Yes| ST[Independent t test Student]
+V1 -->|No| WT[Welch t test]
+
+%% ---- 3+ GROUPS ----
+E -->|3 plus groups| G{Independent or repeated?}
+
+G -->|Independent| N4[Normality]
+N4 -->|Fail| KW[Kruskal Wallis]
+KW --> PD[Dunn post hoc optional Monte Carlo]
+
+N4 -->|Pass| V2{Equal variances? Levene}
+V2 -->|Yes| ANOVA[One way ANOVA]
+ANOVA --> PTU[Tukey HSD]
+V2 -->|No| WANOVA[Welch ANOVA]
+WANOVA --> GH[Games Howell post hoc]
+
+G -->|Repeated| RMQ{Assumptions OK?}
+RMQ -->|Yes| RMANOVA[Repeated Measures ANOVA]
+RMQ -->|No| FR[Friedman test]
+
+%% ----- Binary Outcome -----
+C -->|Binary| H{Predictor type?}
+H -->|Continuous| LOGIT[Logistic regression]
+H -->|Categorical| I{Paired or independent?}
+I -->|Paired| MC[McNemar test]
+I -->|Independent| J{Small expected counts?}
+J -->|Yes| FE[Fisher exact test]
+J -->|No| CHI[Chi square test of independence]
+
+%% ----- Ordinal Outcome -----
+C -->|Ordinal| K{Predictor type?}
+K -->|Continuous| ORD[Ordinal regression]
+K -->|Categorical| L{Number of groups?}
+L -->|2 groups| M{Paired or independent?}
+M -->|Paired| WP2[Wilcoxon paired]
+M -->|Independent| MW2[Mann Whitney U]
+L -->|3 plus groups| R{Repeated or independent?}
+R -->|Repeated| FR2[Friedman test]
+R -->|Independent| KW2[Kruskal Wallis]
+
+%% ----- Count Outcome -----
+C -->|Count| Q{Goal?}
+Q -->|Compare rates| PR[Poisson rate test]
+Q -->|Model counts| POIS[Poisson regression]
+
+%% =========================
+%% ASSOCIATION
+%% =========================
+B -->|Association| S{Variable types?}
+S -->|Two continuous normal| P1[Normality]
+P1 --> PEAR[Pearson correlation]
+S -->|Non normal or ordinal| SPEAR[Spearman correlation]
+S -->|Categorical vs categorical| CHI2[Chi square test]
+S -->|Binary outcome predictors| LOGIT2[Logistic regression]
+
+%% =========================
+%% MODELING
+%% =========================
+B -->|Modeling| T{Outcome type?}
+T -->|Continuous| OLS2[Linear regression]
+T -->|Binary| LOGIT3[Logistic regression]
+T -->|Count| POIS2[Poisson regression]
