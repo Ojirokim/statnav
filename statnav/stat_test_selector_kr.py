@@ -1,19 +1,61 @@
+
+# ==========================================================
+# UNIFIED INPUT CHECKLIST (Applies to ALL statistical snippets)
+# ----------------------------------------------------------
+# 1. Data Type Requirements
+#    - Numeric samples: np.array([...], dtype=float)
+#    - Count data: non-negative integers only
+#    - Logistic regression y: binary (0 and 1 only)
+#
+# 2. Shape Requirements
+#    - One-sample tests: x → 1D array (n,)
+#    - Independent two-sample tests: a, b → two 1D arrays
+#    - Paired tests: x_before, x_after → equal-length 1D arrays
+#    - Multi-group tests: groups = [g1, g2, g3, ...]
+#    - Chi-square tests: table → 2D array (R × C), R ≥ 2, C ≥ 2
+#    - Regression:
+#         y → shape (n,)
+#         X → shape (n, p)
+#
+# 3. Data Validity
+#    - No NaN values
+#    - No infinite values
+#    - Sample size must be > 0
+#    - For proportion tests: 0 ≤ count ≤ nobs
+#
+# 4. Statistical Constraints
+#    - Chi-square expected counts should not all be zero
+#    - Logistic regression requires variability in y
+#    - Equal-length requirement for paired tests
+#
+# 5. Example Template
+#    x = np.array([1.2, 2.3, 3.4], dtype=float)
+#
+# ==========================================================
+
+
 # ============================================================
 # 통계 검정 선택 및 추론 도우미 (CLI)
 # ------------------------------------------------------------
 # 기능:
-#  - 검정 선택(수업 흐름 중심)
+#  - 검정 선택(단계별 가이드)
 #  - 가정 검토(정규성: Shapiro + Q-Q(probplot), 등분산: Levene)
 #  - 효과크기 및 신뢰구간(가능한 경우 해석적/부트스트랩 안내)
 #
-# 버전: v1.1
-# 마지막 점검: 2026-02-14  |  smoketest: PASS
+# 버전: v1.2.0
+# 마지막 점검: 2026-02-15  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
 # ============================================================
 
 #!/usr/bin/env python3
 """대화형 통계 검정 선택기(CLI) — 워크플로우 친화 버전
+
+v1.2 변경점:
+- 단측/양측 선택을 필요한 검정에서만 1회 묻고, 이후 모든 코드 스니펫에 자동 반영
+- 부트스트랩 CI도 단측 선택 시 한쪽만(±inf) 나오도록 개선(해당 스니펫)
+- 각 검정의 효과크기 해석 기준(경험칙)을 함께 출력
+
 from __future__ import annotations
 
 목표:
@@ -27,6 +69,9 @@ from __future__ import annotations
 """
 
 from typing import Optional, List, Tuple, Dict, Any
+
+CURRENT_ALT: Optional[str] = None  # "two-sided" | "greater" | "less"
+
 
 
 # ----------------------------
@@ -46,11 +91,28 @@ def ask_choice(prompt: str, choices: List[Tuple[str, str]]) -> str:
         print("잘못된 선택입니다. 다시 시도하세요.")
 
 
+
+def ensure_alternative_selected() -> str:
+    """대립가설 방향이 필요한 검정에서만 1회 물어봅니다."""
+    global CURRENT_ALT
+    if CURRENT_ALT is None:
+        CURRENT_ALT = ask_choice(
+            "대립가설(단측/양측)을 선택하세요. (데이터를 보기 전에 결정하는 것이 원칙입니다)",
+            [
+                ("two-sided", "양측(two-sided)"),
+                ("greater", "단측: 크다/증가(greater)"),
+                ("less", "단측: 작다/감소(less)"),
+            ],
+        )
+    return CURRENT_ALT
+
 def ask_yes_no(prompt: str) -> bool:
     return ask_choice(prompt, [("y", "예"), ("n", "아니오")]) == "y"
 
 
 def print_node(title: str, detail: Optional[str] = None, code: Optional[str] = None) -> None:
+    """Pretty printer for nodes. Uses copy-friendly snippet markers."""
+    import sys
     print("\n" + "=" * 72)
     print(title)
     if detail:
@@ -58,8 +120,11 @@ def print_node(title: str, detail: Optional[str] = None, code: Optional[str] = N
         print(detail)
     if code:
         print("-" * 72)
-        print("코드 스니펫:")
-        print(code)
+        print("코드 스니펫 (복사용):")
+        print("# ---BEGIN SNIPPET---")
+        safe_code = code.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ").rstrip("\n")
+        sys.stdout.write(safe_code + "\n")
+        print("# ---END SNIPPET---")
     print("=" * 72)
 
 
@@ -129,10 +194,21 @@ print("Power =", power)
 alpha = 0.05  # TODO
 n = len(x); df = n - 1
 se = stats.sem(x)
-tcrit = stats.t.ppf(1 - alpha/2, df)
 xbar = np.mean(x)
-ci_mean = (xbar - tcrit*se, xbar + tcrit*se)
-ci_diff = ((xbar-mu0) - tcrit*se, (xbar-mu0) + tcrit*se)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df)
+tcrit_one = stats.t.ppf(1 - alpha, df)
+
+if alternative == "two-sided":
+    ci_mean = (xbar - tcrit_two*se, xbar + tcrit_two*se)
+    ci_diff = ((xbar-mu0) - tcrit_two*se, (xbar-mu0) + tcrit_two*se)
+elif alternative == "greater":
+    ci_mean = (xbar - tcrit_one*se, np.inf)
+    ci_diff = ((xbar-mu0) - tcrit_one*se, np.inf)
+else:  # "less"
+    ci_mean = (-np.inf, xbar + tcrit_one*se)
+    ci_diff = (-np.inf, (xbar-mu0) + tcrit_one*se)
+
 print(f"{int((1-alpha)*100)}% CI mean =", ci_mean)
 print(f"{int((1-alpha)*100)}% CI (mean-mu0) =", ci_diff)
 """
@@ -149,34 +225,35 @@ mu0 = 0  # TODO
 stat, p_value = stats.wilcoxon(x - mu0, alternative="two-sided")
 print("W =", stat, "p =", p_value)
 
-# 효과크기 r (근사; 정규근사 기반)
+# 효과크기: Rank-biserial correlation (RBC)
+# RBC = (W+ - W-) / (W+ + W-), W+는 양의 차이(+)에 대한 순위합
 d = x - mu0
 d_nz = d[d != 0]
-n = len(d_nz)
-mean_w = n * (n + 1) / 4
-var_w = n * (n + 1) * (2 * n + 1) / 24
-z = (stat - mean_w - 0.5) / np.sqrt(var_w)
-r = z / np.sqrt(n)
-print("Effect size r (approx) =", r)
+if len(d_nz) == 0:
+    print("모든 차이가 0입니다. 효과크기를 계산할 수 없습니다.")
+else:
+    ranks = stats.rankdata(np.abs(d_nz))
+    w_pos = ranks[d_nz > 0].sum()
+    w_neg = ranks[d_nz < 0].sum()
+    rbc = (w_pos - w_neg) / (w_pos + w_neg)
+    print("Rank-biserial correlation (RBC) =", rbc)
 
-# 신뢰구간(권장): 위치(중앙값) 차이 또는 r에 대해 부트스트랩
-rng = np.random.default_rng(0)
-B=2000
-vals=[]
-for _ in range(B):
-    xx = rng.choice(x, size=len(x), replace=True)
-    s,_ = stats.wilcoxon(xx-mu0, alternative="two-sided")
-    d2 = xx - mu0
-    d2 = d2[d2!=0]
-    n2=len(d2)
-    if n2<5: 
-        continue
-    mean_w2 = n2*(n2+1)/4
-    var_w2 = n2*(n2+1)*(2*n2+1)/24
-    z2=(s-mean_w2-0.5)/np.sqrt(var_w2)
-    vals.append(z2/np.sqrt(n2))
-ci=(np.percentile(vals,2.5), np.percentile(vals,97.5))
-print("95% CI for r (bootstrap) =", ci)
+    # 신뢰구간(권장): RBC에 대해 부트스트랩
+    rng = np.random.default_rng(0)
+    B = 2000
+    vals = []
+    for _ in range(B):
+        xx = rng.choice(x, size=len(x), replace=True)
+        d2 = (xx - mu0)
+        d2 = d2[d2 != 0]
+        if len(d2) < 2:
+            continue
+        r2 = stats.rankdata(np.abs(d2))
+        w_pos2 = r2[d2 > 0].sum()
+        w_neg2 = r2[d2 < 0].sum()
+        vals.append((w_pos2 - w_neg2) / (w_pos2 + w_neg2))
+    ci = (np.percentile(vals, 2.5), np.percentile(vals, 97.5))
+    print("95% CI for RBC (bootstrap) =", ci)
 """
     ),
 
@@ -205,8 +282,18 @@ print("Power =", power)
 alpha = 0.05  # TODO
 n = len(diff); df = n - 1
 se = stats.sem(diff)
-tcrit = stats.t.ppf(1 - alpha/2, df)
-ci = (np.mean(diff) - tcrit*se, np.mean(diff) + tcrit*se)
+est = np.mean(diff)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df)
+tcrit_one = stats.t.ppf(1 - alpha, df)
+
+if alternative == "two-sided":
+    ci = (est - tcrit_two*se, est + tcrit_two*se)
+elif alternative == "greater":
+    ci = (est - tcrit_one*se, np.inf)
+else:  # "less"
+    ci = (-np.inf, est + tcrit_one*se)
+
 print(f"{int((1-alpha)*100)}% CI mean(diff) =", ci)
 """
     ),
@@ -221,37 +308,45 @@ diff = x_before - x_after
 stat, p_value = stats.wilcoxon(diff, alternative="two-sided")
 print("W =", stat, "p =", p_value)
 
-# 효과크기 r (근사)
+# 효과크기: Rank-biserial correlation (RBC)
 diff_nz = diff[diff != 0]
-n = len(diff_nz)
-mean_w = n * (n + 1) / 4
-var_w = n * (n + 1) * (2 * n + 1) / 24
-z = (stat - mean_w - 0.5) / np.sqrt(var_w)
-r = z / np.sqrt(n)
-print("Effect size r (approx) =", r)
+if len(diff_nz) == 0:
+    print("모든 차이가 0입니다. 효과크기를 계산할 수 없습니다.")
+else:
+    ranks = stats.rankdata(np.abs(diff_nz))
+    w_pos = ranks[diff_nz > 0].sum()
+    w_neg = ranks[diff_nz < 0].sum()
+    rbc = (w_pos - w_neg) / (w_pos + w_neg)
+    print("Rank-biserial correlation (RBC) =", rbc)
 
-# 신뢰구간(권장): 부트스트랩으로 r 또는 중앙값 차이 CI
-rng = np.random.default_rng(0)
-B=2000
-vals=[]
-med=[]
-for _ in range(B):
-    idx = rng.integers(0, len(diff), size=len(diff))
-    d = diff[idx]
-    s,_ = stats.wilcoxon(d, alternative="two-sided")
-    d2 = d[d!=0]
-    n2=len(d2)
-    if n2<5:
-        continue
-    mean_w2 = n2*(n2+1)/4
-    var_w2 = n2*(n2+1)*(2*n2+1)/24
-    z2=(s-mean_w2-0.5)/np.sqrt(var_w2)
-    vals.append(z2/np.sqrt(n2))
-    med.append(np.median(d))
-ci_r=(np.percentile(vals,2.5), np.percentile(vals,97.5))
-ci_med=(np.percentile(med,2.5), np.percentile(med,97.5))
-print("95% CI for r (bootstrap) =", ci_r)
-print("95% CI for median(diff) (bootstrap) =", ci_med)
+    # 신뢰구간(권장): RBC 및 중앙값 차이 부트스트랩
+    rng = np.random.default_rng(0)
+    B = 2000
+    vals = []
+    med = []
+    for _ in range(B):
+        idx = rng.integers(0, len(diff), size=len(diff))
+        d_b = diff[idx]
+        d2 = d_b[d_b != 0]
+        if len(d2) < 2:
+            continue
+        r2 = stats.rankdata(np.abs(d2))
+        w_pos2 = r2[d2 > 0].sum()
+        w_neg2 = r2[d2 < 0].sum()
+        vals.append((w_pos2 - w_neg2) / (w_pos2 + w_neg2))
+        med.append(np.median(d_b))
+    alpha = 0.05
+    if alternative == "two-sided":
+        ci_rbc = (np.percentile(vals, 100*alpha/2), np.percentile(vals, 100*(1-alpha/2)))
+        ci_med = (np.percentile(med, 100*alpha/2), np.percentile(med, 100*(1-alpha/2)))
+    elif alternative == "greater":
+        ci_rbc = (np.percentile(vals, 100*alpha), np.inf)
+        ci_med = (np.percentile(med, 100*alpha), np.inf)
+    else:
+        ci_rbc = (-np.inf, np.percentile(vals, 100*(1-alpha)))
+        ci_med = (-np.inf, np.percentile(med, 100*(1-alpha)))
+    print("95% CI for RBC (bootstrap) =", ci_rbc)
+    print("95% CI for median(diff) (bootstrap) =", ci_med)
 """
     ),
 
@@ -283,8 +378,17 @@ print("Power =", power)
 alpha = 0.05  # TODO
 mean_diff = np.mean(a) - np.mean(b)
 se_diff = spooled * np.sqrt(1/n1 + 1/n2)
-tcrit = stats.t.ppf(1 - alpha/2, df)
-ci = (mean_diff - tcrit*se_diff, mean_diff + tcrit*se_diff)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df)
+tcrit_one = stats.t.ppf(1 - alpha, df)
+
+if alternative == "two-sided":
+    ci = (mean_diff - tcrit_two*se_diff, mean_diff + tcrit_two*se_diff)
+elif alternative == "greater":
+    ci = (mean_diff - tcrit_one*se_diff, np.inf)
+else:  # "less"
+    ci = (-np.inf, mean_diff + tcrit_one*se_diff)
+
 print(f"{int((1-alpha)*100)}% CI mean difference =", ci)
 """
     ),
@@ -317,8 +421,17 @@ alpha = 0.05  # TODO
 mean_diff = np.mean(a) - np.mean(b)
 se_diff = np.sqrt(s1/n1 + s2/n2)
 df_w = (s1/n1 + s2/n2)**2 / ((s1/n1)**2/(n1-1) + (s2/n2)**2/(n2-1))
-tcrit = stats.t.ppf(1 - alpha/2, df_w)
-ci = (mean_diff - tcrit*se_diff, mean_diff + tcrit*se_diff)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df_w)
+tcrit_one = stats.t.ppf(1 - alpha, df_w)
+
+if alternative == "two-sided":
+    ci = (mean_diff - tcrit_two*se_diff, mean_diff + tcrit_two*se_diff)
+elif alternative == "greater":
+    ci = (mean_diff - tcrit_one*se_diff, np.inf)
+else:  # "less"
+    ci = (-np.inf, mean_diff + tcrit_one*se_diff)
+
 print(f"{int((1-alpha)*100)}% CI mean difference (Welch) =", ci)
 """
     ),
@@ -350,9 +463,15 @@ vals=[]
 for _ in range(B):
     aa = rng.choice(a, size=n1, replace=True)
     bb = rng.choice(b, size=n2, replace=True)
-    u_b, _ = stats.mannwhitneyu(aa, bb, alternative="two-sided")
+    u_b, _ = stats.mannwhitneyu(aa, bb, alternative=alternative)
     vals.append(1 - (2*u_b)/(n1*n2))
-ci=(np.percentile(vals,2.5), np.percentile(vals,97.5))
+alpha = 0.05
+if alternative == "two-sided":
+    ci = (np.percentile(vals, 100*alpha/2), np.percentile(vals, 100*(1-alpha/2)))
+elif alternative == "greater":
+    ci = (np.percentile(vals, 100*alpha), np.inf)
+else:
+    ci = (-np.inf, np.percentile(vals, 100*(1-alpha)))
 print("95% CI for RBC (bootstrap) =", ci)
 
 # 검정력: 닫힌형식은 흔치 않으므로 시뮬레이션 권장
@@ -530,39 +649,307 @@ print("95% CI for epsilon^2 (bootstrap) =", ci)
     "chi2_contingency": (
         "카이제곱 독립성 검정",
         "범주형 변수 간 관련성(분할표, R×C).",
-        """import numpy as np
+        """
+import numpy as np
 from scipy import stats
 
-# table : 분할표(관측도수) array
-chi2, p, dof, expected = stats.chi2_contingency(table)
+# table : 분할표(관측도수) array (R×C)
+# TODO INPUT:
+# table = np.array([[...], [...], ...], dtype=int)
+
+table_np: np.ndarray = np.asarray(table, dtype=float)
+chi2, p, dof, expected_raw = stats.chi2_contingency(table_np, correction=False)
+chi2 = float(chi2)
+p = float(p)
+dof = int(dof)
+expected: np.ndarray = np.asarray(expected_raw, dtype=float)
+
 print("chi2 =", chi2, "p =", p, "dof =", dof)
 
-# 효과크기: Cramer's V
-n = table.sum()
-r, c = table.shape
-cramers_v = np.sqrt(chi2 / (n * (min(r-1, c-1))))
+# 효과크기: Cramer's V (안전 계산)
+n: float = float(table_np.sum())
+r: int
+c: int
+r, c = table_np.shape
+k: int = min(r - 1, c - 1)
+cramers_v: float = float('nan')
+if n > 0 and k > 0:
+    cramers_v = float(np.sqrt(chi2 / (n * k)))
 print("Cramer's V =", cramers_v)
 
-# 검정력(근사)
-from statsmodels.stats.power import GofChisquarePower
-power = GofChisquarePower().power(effect_size=cramers_v, nobs=n, alpha=0.05)
-print("Power (approx) =", power)
+# ── 사후분석: 조정 표준화 잔차(Adjusted standardized residuals) ──
+# 경험칙: |잔차| > 2 이면 해당 셀이 기대와 유의미하게 다를 수 있음
+row_sum = table_np.sum(axis=1, keepdims=True)
+col_sum = table_np.sum(axis=0, keepdims=True)
+row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum, dtype=float)
+col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum, dtype=float)
 
-# Cramer's V 신뢰구간(권장: 부트스트랩)
-rng = np.random.default_rng(0)
-B = 2000  # TODO 반복 횟수
-vals = []
-# 원자료가 '개별 관측치'가 아니라 '도수표'인 경우, 멀티노미얼로 재표집하는 방식
-p_hat = (table / n).reshape(-1)
-for _ in range(B):
-    sample = rng.multinomial(n, p_hat).reshape(r, c)
-    chi2_b, _, _, _ = stats.chi2_contingency(sample)
-    v_b = np.sqrt(chi2_b / (n * (min(r-1, c-1))))
-    vals.append(v_b)
-ci = (np.percentile(vals, 2.5), np.percentile(vals, 97.5))
-print("95% CI for Cramer's V (bootstrap) =", ci)
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    resid: np.ndarray = (table_np - expected) / den
+
+# ── 보기 좋은 출력: 라벨(행/열) + 관측/기대/잔차 ──
+import pandas as pd
+
+# table이 DataFrame이면 라벨 유지, 아니면 임시 라벨 부여
+table_df = table if hasattr(table, "index") else pd.DataFrame(table_np)
+
+rows = []
+for i, rlab in enumerate(table_df.index):
+    for j, clab in enumerate(table_df.columns):
+        z = resid[i, j]
+        rows.append({
+            "행(Row)": rlab,
+            "열(Col)": clab,
+            "관측(Obs)": int(table_np[i, j]),
+            "기대(Exp)": float(expected[i, j]),
+            "조정잔차(AdjResid)": float(z) if np.isfinite(z) else float("nan"),
+            "유의(|z|>2)": bool(np.isfinite(z) and abs(z) > 2),
+            "방향": ("관측>기대" if table_np[i, j] > expected[i, j] else "관측<기대")
+        })
+
+out = pd.DataFrame(rows)
+out_sorted = out.sort_values("조정잔차(AdjResid)", key=lambda s: s.abs(), ascending=False)
+
+print("\\n[사후분석] 조정 표준화 잔차 요약 (절댓값 큰 순 상위 10개)")
+print(out_sorted.head(10).to_string(index=False))
+
+sig = out_sorted[out_sorted["유의(|z|>2)"]]
+print("\\n[사후분석] |조정잔차| > 2 인 셀(유의 가능)")
+if len(sig) == 0:
+    print("(없음)")
+else:
+    print(sig.to_string(index=False))
 """
     ),
+    "chi2_ind_cochran_check": (
+        "Cochran 조건 확인(독립성)",
+        "카이제곱 독립성 검정의 근사 조건(Cochran's rule)을 먼저 확인합니다.",
+        """
+import numpy as np
+from scipy import stats
+
+# table : 분할표(관측도수) array (R×C)
+# table = np.array([[...], [...], ...])
+
+table_np: np.ndarray = np.asarray(table, dtype=float)
+chi2, p, dof, expected_raw = stats.chi2_contingency(table_np, correction=False)
+expected: np.ndarray = np.asarray(expected_raw, dtype=float)
+
+# ── Cochran's rule(카이제곱 근사 조건) 확인 ──
+n_under1 = np.sum(expected < 1)
+pct_under5 = np.mean(expected < 5)
+cochran_ok = (n_under1 == 0) and (pct_under5 <= 0.20)
+
+print("shape =", table_np.shape)
+print("n_under1 =", int(n_under1))
+print("pct_under5 =", float(pct_under5))
+print("cochran_ok =", bool(cochran_ok))
+        """
+    ),
+    "chi2_ind_mc": (
+        "카이제곱 독립성 검정(Monte Carlo)",
+        "Cochran 조건 위반 시 Monte Carlo 근사로 p-value를 계산합니다.",
+        """
+import numpy as np
+from scipy import stats
+
+# table : 분할표(관측도수) array (R×C)
+# table = np.array([[...], [...], ...])
+
+chi2_obs, p_asym, dof, expected = stats.chi2_contingency(table, correction=False)
+
+# ── Monte Carlo: 귀무가설(독립) 하에서 표를 재표본화하여 p-value 근사 ──
+# (주의) 아래 템플릿은 "주어진 주변합(margins) 고정" 방식의 근사입니다.
+# 환경/목적에 따라 구현 방식을 조정하세요.
+rng = np.random.default_rng(0)
+n_sim = 100_000
+count_extreme = 0
+
+table_np = np.asarray(table)
+
+row_sums = table_np.sum(axis=1)
+col_sums = table_np.sum(axis=0)
+n = float(table_np.sum())
+p_cols = (col_sums / n) if n > 0 else np.full_like(col_sums, 1.0 / len(col_sums), dtype=float)
+
+for _ in range(n_sim):
+    # 각 행의 합을 고정하고, 열 분포는 p_cols로 다항표본(근사)
+    sim = np.vstack([rng.multinomial(int(rs), p_cols) for rs in row_sums])
+    chi2_s, _, _, _ = stats.chi2_contingency(sim, correction=False)
+    count_extreme += (chi2_s >= chi2_obs)
+
+p_mc = count_extreme / n_sim
+print("Primary p-value (Monte Carlo approx) =", p_mc)
+print("(Optional) chi2 =", chi2_obs, "dof =", dof, "asymptotic p =", p_asym)
+
+# 효과크기: Cramer's V (참고)
+r, c = table.shape
+k = min(r - 1, c - 1)
+cramers_v = np.sqrt(chi2_obs / (n * k))
+print("Cramer's V =", cramers_v)
+
+        """
+    ),
+    "chi2_ind_collapse": (
+        "범주 병합 후 카이제곱 독립성",
+        "기대빈도가 작을 때 범주를 병합한 뒤 독립성 검정을 수행합니다.",
+        """
+import numpy as np
+from scipy import stats
+
+# [범주 병합(collapsing categories)] 후에 다시 카이제곱 독립성 검정을 수행하세요.
+# 병합 규칙에 맞춰 table을 직접 재구성하세요.
+#
+# TODO INPUT:
+# table = np.array([[...], [...], ...], dtype=int)  # 병합된 교차표
+
+table_np = np.asarray(table)
+res = stats.chi2_contingency(table_np, correction=False)
+
+chi2 = float(res.statistic)
+p = float(res.pvalue)
+dof = int(res.dof)
+expected = np.asarray(res.expected_freq, dtype=float)
+
+print("chi2 =", chi2, "p =", p, "dof =", dof)
+
+# 효과크기: Cramer's V (안전 계산)
+n = float(table_np.sum())
+r, c = table_np.shape
+k = min(r - 1, c - 1)
+cramers_v = np.nan
+if n > 0 and k > 0:
+    cramers_v = float(np.sqrt(chi2 / (n * k)))
+print("Cramer's V =", cramers_v)
+
+# ── 사후분석: 조정 표준화 잔차(Adjusted standardized residuals) ──
+# 경험칙: |잔차| > 2 이면 해당 셀이 기대와 유의미하게 다를 수 있음
+row_sum = table_np.sum(axis=1, keepdims=True)
+col_sum = table_np.sum(axis=0, keepdims=True)
+row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum, dtype=float)
+col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum, dtype=float)
+
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    resid = (table_np - expected) / den
+
+for i in range(r):
+    for j in range(c):
+        val = float(resid[i, j]) if np.isfinite(resid[i, j]) else float("nan")
+        flag = "기대와 다름(≈유의)" if np.isfinite(val) and abs(val) > 2 else ""
+        print(f"cell[{i},{j}] resid = {val:.3f} {flag}")
+        """
+    ),
+    "ffh_exact": (
+        "Fisher–Freeman–Halton(FFH) 정확검정",
+        "R×C 교차표에서 사용할 수 있는 정확검정(환경에 따라 지원이 다름).",
+        """
+import numpy as np
+from scipy import stats
+import pandas as pd
+
+# table : 분할표(관측도수) array (R×C)
+# table = np.array([[...], [...], ...], dtype=int)
+
+table_np = np.asarray(table, dtype=float)
+r, c = table_np.shape
+N = float(table_np.sum())
+
+# ── 효과크기: Cramér's V ──
+# 정확검정/Monte Carlo p-value를 쓰더라도, 보고용 효과크기는 보통
+# 같은 교차표의 chi-square 통계량으로부터 Cramér's V를 계산해 제시합니다.
+chi2, p_asym, dof, expected = stats.chi2_contingency(table_np, correction=False)
+k = min(r - 1, c - 1)
+cramers_v = np.sqrt(chi2 / (N * k)) if (N > 0 and k > 0) else np.nan
+print("Cramér's V =", float(cramers_v))
+
+# ── Fisher–Freeman–Halton(FFH) 정확검정 p-value ──
+# SciPy는 (대부분의 버전에서) Fisher exact를 2×2만 지원합니다.
+# RxC FFH가 지원되는 환경이라면 아래가 동작할 수 있지만,
+# 지원되지 않으면 Monte Carlo 근사를 사용합니다.
+try:
+    res = stats.fisher_exact(table_np)
+    p_exact = getattr(res, "pvalue", res[1])
+    print("FFH exact p =", float(p_exact))
+except Exception as e:
+    print("FFH exact test not available in this SciPy version.")
+    print("Fallback: 귀무가설(독립) 하에서 Monte Carlo 근사(권장).")
+
+    rng = np.random.default_rng(0)
+    n_sim = 100_000
+    chi2_obs = float(chi2)
+
+    row_sums = table_np.sum(axis=1).astype(int)
+    col_sums = table_np.sum(axis=0)
+    p_cols = (col_sums / col_sums.sum()) if col_sums.sum() > 0 else np.full(c, 1.0/c)
+
+    count_extreme = 0
+    for _ in range(n_sim):
+        sim = np.vstack([rng.multinomial(int(rs), p_cols) for rs in row_sums])
+        chi2_sim, _, _, _ = stats.chi2_contingency(sim, correction=False)
+        count_extreme += (chi2_sim >= chi2_obs)
+
+    p_mc = count_extreme / n_sim
+    print("Monte Carlo p (approx) =", float(p_mc))
+
+# ── 사후분석 1: 조정 표준화 잔차(셀 진단) ──
+row_sum = table_np.sum(axis=1, keepdims=True)
+col_sum = table_np.sum(axis=0, keepdims=True)
+row_prop = row_sum / N if N > 0 else np.zeros_like(row_sum)
+col_prop = col_sum / N if N > 0 else np.zeros_like(col_sum)
+
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    adj_resid = (table_np - expected) / den
+
+print("[사후분석] 조정 표준화 잔차(AdjResid, z처럼 해석)")
+# 라벨 출력: table이 DataFrame이면 index/columns 유지
+table_df = table if isinstance(table, pd.DataFrame) else pd.DataFrame(table_np)
+print(pd.DataFrame(adj_resid, index=table_df.index, columns=table_df.columns).round(3))
+
+# ── 사후분석 2(선택): 행(pairwise) Fisher 정확검정 (열이 2개일 때) ──
+# 만약 표가 R×2라면, 행을 2개씩 묶어 2×2 Fisher를 수행하고
+# 다중비교 보정(Holm 등)을 적용할 수 있습니다.
+if c == 2 and r >= 3:
+    from itertools import combinations
+
+    def holm_adjust(pvals):
+        pvals = np.asarray(pvals, dtype=float)
+        m = len(pvals)
+        order = np.argsort(pvals)
+        adj = np.empty(m, dtype=float)
+        prev = 0.0
+        for k_i, idx in enumerate(order):
+            rank = k_i + 1
+            val = (m - rank + 1) * pvals[idx]
+            val = max(val, prev)
+            prev = val
+            adj[idx] = min(1.0, val)
+        return adj
+
+    rows = []
+    pvals = []
+    pairs = list(combinations(range(r), 2))
+    for i, j in pairs:
+        sub = np.vstack([table_np[i, :], table_np[j, :]]).astype(int)
+        _, p = stats.fisher_exact(sub)
+        pvals.append(p)
+        rows.append({"row_i": table_df.index[i] if "table_df" in locals() else i,
+             "row_j": table_df.index[j] if "table_df" in locals() else j,
+             "p_fisher": float(p)})
+
+    adj = holm_adjust(pvals)
+    for rr, p_adj in zip(rows, adj):
+        rr["p_holm"] = float(p_adj)
+
+    df = pd.DataFrame(rows)
+    print("[사후분석] 행 간 pairwise Fisher 정확검정 (Holm 보정)")
+    print(df.sort_values("p_holm").to_string(index=False))
+"""
+
+    ),
+
     "fisher_exact": (
         "Fisher의 정확 검정(2×2)",
         "2×2 표에서 기대도수가 작을 때 사용합니다.",
@@ -573,19 +960,41 @@ from statsmodels.stats.contingency_tables import Table2x2
 # 2×2 분할표(관측도수)
 # table = np.array([[a, b],
 #                   [c, d]])
+
+# Fisher 정확검정(2×2)
 oddsratio, p_value = stats.fisher_exact(table, alternative="two-sided")  # or "less"/"greater"
 print("Fisher exact p =", p_value)
 print("Odds ratio (scipy) =", oddsratio)
 
-# 효과크기: 오즈비(OR) + 95% 신뢰구간
+# 오즈비(OR) 95% CI (exact)
 t22 = Table2x2(table)
-print("Odds ratio (Table2x2) =", t22.oddsratio)
-ci_low, ci_high = t22.oddsratio_confint(alpha=0.05, method="exact")  # exact CI
-print("95% CI for OR =", (ci_low, ci_high))
+ci_low, ci_high = t22.oddsratio_confint(alpha=0.05, method="exact")
+print("95% CI for OR (exact) =", (ci_low, ci_high))
 
-# 참고:
-# - 기대도수가 작은 경우(예: 어떤 셀 기대도수 < 5) Chi-square보다 Fisher가 더 안전합니다.
+# ── 효과크기: 파이계수(phi, φ) ──
+# 2×2 표에서는 φ = Cramér's V 와 동일합니다.
+# φ = sqrt(chi2 / N)
+chi2, p_chi2, dof, expected = stats.chi2_contingency(table, correction=False)
+N = table.sum()
+phi = np.sqrt(chi2 / N) if N > 0 else np.nan
+print("Phi (φ) =", float(phi))
+
+# (선택) 셀 단위 진단: 조정 표준화 잔차(Adjusted standardized residuals)
+row_sum = table.sum(axis=1, keepdims=True)
+col_sum = table.sum(axis=0, keepdims=True)
+row_prop = row_sum / N if N > 0 else np.zeros_like(row_sum, dtype=float)
+col_prop = col_sum / N if N > 0 else np.zeros_like(col_sum, dtype=float)
+
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    adj_resid = (table - expected) / den
+print("조정 표준화 잔차(AdjResid)\n", adj_resid)
+
+# 사후분석 노트:
+# - 2×2 표는 이미 '한 번의 비교'라서, 표준적인 사후분석은 별도로 하지 않습니다.
+# - 대신 OR(및 CI), φ(효과크기), 잔차(어느 셀이 기대에서 벗어났는지)를 보고합니다.
 """
+
     ),
     "mcnemar": (
         "McNemar 검정(대응 이진)",
@@ -654,7 +1063,12 @@ print("r^2 =", r**2)
         """from scipy import stats
 import numpy as np
 
-rho, p_value = stats.spearmanr(x, y)
+try:
+    rho, p_value = stats.spearmanr(x, y, alternative=alternative)
+except TypeError:
+    rho, p_value = stats.spearmanr(x, y)
+    if alternative != "two-sided":
+        print("WARNING: This SciPy version does not support one-sided p-values for spearmanr; p is two-sided.")
 print("Spearman rho =", rho, "p =", p_value)
 
 # rho의 신뢰구간(권장): 부트스트랩
@@ -664,9 +1078,16 @@ vals=[]
 n=len(x)
 for _ in range(B):
     idx = rng.integers(0, n, size=n)
-    r,_ = stats.spearmanr(np.array(x)[idx], np.array(y)[idx])
+    r, _ = stats.spearmanr(np.array(x)[idx], np.array(y)[idx])
     vals.append(r)
-ci=(np.percentile(vals,2.5), np.percentile(vals,97.5))
+
+alpha = 0.05
+if alternative == "two-sided":
+    ci = (np.percentile(vals, 100*alpha/2), np.percentile(vals, 100*(1-alpha/2)))
+elif alternative == "greater":
+    ci = (np.percentile(vals, 100*alpha), np.inf)
+else:
+    ci = (-np.inf, np.percentile(vals, 100*(1-alpha)))
 print("95% CI for rho (bootstrap) =", ci)
 """
     ),
@@ -759,14 +1180,28 @@ n = len(x)
 xbar = np.mean(x)
 
 z = (xbar - mu0) / (sigma / np.sqrt(n))
-p_two = 2 * stats.norm.sf(abs(z))  # two-sided
-print("z =", z, "p (two-sided) =", p_two)
+
+# p-value by alternative
+if alternative == "two-sided":
+    p_value = 2 * stats.norm.sf(abs(z))
+elif alternative == "greater":
+    p_value = stats.norm.sf(z)
+else:  # "less"
+    p_value = stats.norm.cdf(z)
+print("z =", z, f"p ({alternative}) =", p_value)
 
 # CI for mean (z-based)
 alpha = 0.05
-zcrit = stats.norm.ppf(1 - alpha/2)
-ci = (xbar - zcrit * sigma/np.sqrt(n), xbar + zcrit * sigma/np.sqrt(n))
-print("95% CI for mean =", ci)
+zcrit_two = stats.norm.ppf(1 - alpha/2)
+zcrit_one = stats.norm.ppf(1 - alpha)
+
+if alternative == "two-sided":
+    ci = (xbar - zcrit_two * sigma/np.sqrt(n), xbar + zcrit_two * sigma/np.sqrt(n))
+elif alternative == "greater":
+    ci = (xbar - zcrit_one * sigma/np.sqrt(n), np.inf)
+else:  # "less"
+    ci = (-np.inf, xbar + zcrit_one * sigma/np.sqrt(n))
+print("CI for mean =", ci)
 """
     ),
 
@@ -849,7 +1284,8 @@ print("Power (given nobs1,nobs2) =", power)
     "chi2_gof": (
         "카이제곱 적합도 검정",
         "관측 도수가 주어진 기대 분포(한 개 범주형 변수)와 일치하는지 검정합니다.",
-        """import numpy as np
+        """
+import numpy as np
 from scipy import stats
 
 # 관측도수
@@ -859,44 +1295,207 @@ from scipy import stats
 # expected_probs = np.array([...])  # sum=1
 # expected = expected_probs * observed.sum()
 
+n = observed.sum()
+
+# ── 카이제곱 적합도 검정(근사) ──
 chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
-print("chi2 =", chi2, "p =", p)
+df = len(observed) - 1
+print("chi2 =", chi2, "df =", df, "p =", p)
 
 # 효과크기(권장): Cohen's w (적합도 검정)
-n = observed.sum()
 w = np.sqrt(chi2 / n)
 print("Cohen's w =", w)
 
-# 검정력(근사)
-from statsmodels.stats.power import GofChisquarePower
-power = GofChisquarePower().power(effect_size=w, nobs=n, alpha=0.05)
-print("Power (approx) =", power)
+# ── 사후분석: 표준화 잔차(Standardized residuals) ──
+# 표준화 잔차 = (관측 - 기대) / √기대
+# 경험칙: |잔차| > 2 이면 해당 범주가 기대와 유의미하게 다를 수 있음
+std_residuals = (observed - expected) / np.sqrt(expected)
+for i, r in enumerate(std_residuals):
+    flag = "기대와 다름(≈유의)" if abs(r) > 2 else ""
+    print(f"category[{i}] std resid = {r:.3f} {flag}")
 
-# w의 신뢰구간: 보통 부트스트랩(또는 모델 기반)로 계산
-rng = np.random.default_rng(0)
-B = 2000
-vals=[]
-p_hat = observed/observed.sum()
-for _ in range(B):
-    samp = rng.multinomial(n, p_hat)
-    exp = expected  # 기대분포는 고정(문제에서 주어짐)이라고 가정
-    chi2_b, _ = stats.chisquare(f_obs=samp, f_exp=exp)
-    vals.append(np.sqrt(chi2_b/n))
-ci=(np.percentile(vals,2.5), np.percentile(vals,97.5))
-print("95% CI for Cohen's w (bootstrap) =", ci)
 """
     ),
+    "chi2_gof_cochran_check": (
+        "Cochran 조건 확인(적합도)",
+        "카이제곱 적합도 검정의 근사 조건(Cochran's rule)을 먼저 확인합니다.",
+        """
+import numpy as np
+
+# 관측도수
+# observed = np.array([o1, o2, o3, ...])
+
+# 기대비율(합=1) 또는 기대도수(합=n)
+# expected_probs = np.array([...])  # sum=1
+# expected = expected_probs * observed.sum()
+expected = np.asarray(expected, dtype=float)
+
+# ── Cochran's rule(카이제곱 근사 조건) 확인 ──
+# (1) 기대빈도 < 5인 셀이 전체의 20% 이하  AND
+# (2) 기대빈도 < 1인 셀이 0개
+n_under1 = np.sum(expected < 1)
+pct_under5 = np.mean(expected < 5)
+cochran_ok = (n_under1 == 0) and (pct_under5 <= 0.20)
+
+print("n_under1 =", int(n_under1))
+print("pct_under5 =", float(pct_under5))
+print("cochran_ok =", bool(cochran_ok))
+
+        """
+    ),
+    "chi2_gof_mc": (
+        "카이제곱 적합도 검정(Monte Carlo)",
+        "Cochran 조건 위반 시 Monte Carlo 시뮬레이션으로 p-value를 근사합니다.",
+        """
+import numpy as np
+from scipy import stats
+
+# 관측도수
+# observed = np.array([o1, o2, o3, ...])
+
+# 기대비율(합=1)
+# expected_probs = np.array([...])  # sum=1
+
+n = int(observed.sum())
+expected = expected_probs * n
+
+# 관측된 chi-square 통계량(참조용)
+chi2_obs, p_asym = stats.chisquare(f_obs=observed, f_exp=expected)
+df = len(observed) - 1
+
+# ── Monte Carlo 시뮬레이션(귀무가설 하에서 χ² 분포를 직접 생성) ──
+rng = np.random.default_rng(0)
+n_sim = 100_000  # TODO: 시뮬레이션 횟수
+count_extreme = 0
+for _ in range(n_sim):
+    samp = rng.multinomial(n, expected_probs)
+    chi2_s, _ = stats.chisquare(f_obs=samp, f_exp=expected)
+    count_extreme += (chi2_s >= chi2_obs)
+
+p_mc = count_extreme / n_sim
+print("Primary p-value (Monte Carlo) =", p_mc)
+print("(Optional) chi2 =", chi2_obs, "df =", df, "asymptotic p =", p_asym)
+
+# 효과크기: Cohen's w (GOF)
+w = np.sqrt(chi2_obs / n)
+print("Cohen's w =", w)
+
+# 사후분석: 표준화 잔차(|r| > 2 표시)
+std_residuals = (observed - expected) / np.sqrt(expected)
+for i, r in enumerate(std_residuals):
+    if abs(r) > 2:
+        print(f"category[{i}] std resid = {r:.3f}")
+
+        """
+    ),
+    "chi2_gof_collapse": (
+        "범주 병합 후 카이제곱 적합도",
+        "기대빈도가 작을 때 범주를 병합한 뒤 적합도 검정을 수행합니다.",
+        """
+import numpy as np
+from scipy import stats
+
+# [범주 병합(collapsing categories)] 후에 다시 카이제곱 적합도 검정을 수행하세요.
+# 아래는 템플릿입니다. 병합 규칙에 맞춰 observed/expected_probs를 직접 재구성하세요.
+
+# 예시) 원래 6범주를 (0~2), (3~5)로 병합한다면:
+# observed_raw = np.array([o1, o2, o3, o4, o5, o6])
+# observed = np.array([observed_raw[:3].sum(), observed_raw[3:].sum()])
+#
+# expected_probs_raw = np.ones(6) / 6
+# expected_probs = np.array([expected_probs_raw[:3].sum(), expected_probs_raw[3:].sum()])
+
+n = int(observed.sum())
+expected = expected_probs * n
+
+chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
+df = len(observed) - 1
+print("chi2 =", chi2, "df =", df, "p =", p)
+
+w = np.sqrt(chi2 / n)
+print("Cohen's w =", w)
+
+std_residuals = (observed - expected) / np.sqrt(expected)
+for i, r in enumerate(std_residuals):
+    flag = "기대와 다름(≈유의)" if abs(r) > 2 else ""
+    print(f"category[{i}] std resid = {r:.3f} {flag}")
+
+        """
+    ),
+
 
     # 순열(퍼뮤테이션) test (independent two-sample) — advanced
 }
 
+
+
+# ----------------------------
+# Effect size interpretation guides (rules of thumb)
+# ----------------------------
+
+EFFECT_GUIDE: Dict[str, str] = {
+    # t-tests (mean differences)
+    "one_sample_t": "Cohen's d: |d|≈0.2(작음), 0.5(중간), 0.8(큼).\nHedges' g도 동일한 기준을 자주 사용합니다.\n※ 맥락/도메인 기준이 더 중요합니다.",
+    "paired_t": "Cohen's d(대응): |d|≈0.2(작음), 0.5(중간), 0.8(큼).\n대응설계에서는 동일 d라도 실제 의미가 더 클 수 있습니다(측정오차 감소).",
+    "ind_t_student": "Cohen's d(Hedges' g): |d|≈0.2(작음), 0.5(중간), 0.8(큼).\n표본크기가 작거나 분산이 다르면 g를 권장합니다.",
+    "ind_t_welch": "Cohen's d(Hedges' g): |d|≈0.2(작음), 0.5(중간), 0.8(큼).\nWelch는 등분산이 아닐 때 사용(효과크기 기준은 동일).",
+    "one_sample_z_mean": "표준화 평균차(Cohen's d와 유사): |d|≈0.2(작음), 0.5(중간), 0.8(큼).",
+
+    # correlations
+    "pearsonr": "상관계수 r: |r|≈0.1(작음), 0.3(중간), 0.5(큼).\nr^2는 설명분산(선형 관계에서)로 해석합니다.",
+    "spearmanr": "순위상관 rho: |rho|≈0.1(작음), 0.3(중간), 0.5(큼).\n자료가 서열/비정규일 때 r 대신 rho를 권장.",
+
+    # nonparametric two/paired samples
+    "paired_wilcoxon": "Rank-biserial correlation(RBC): |r|≈0.1(작음), 0.3(중간), 0.5(큼)처럼 해석하는 경우가 많습니다.\nCliff's delta 기준을 쓰기도 함(|δ|<0.147 무시, <0.33 작음, <0.474 중간, 그 이상 큼).",
+    "mannwhitney": "Rank-biserial correlation(RBC): |r|≈0.1(작음), 0.3(중간), 0.5(큼) 경험칙.\nCliff's delta 경험칙(|δ|<0.147 무시, <0.33 작음, <0.474 중간, 그 이상 큼).",
+
+    # ANOVA / KW
+    "anova_oneway": "η²(eta squared): ≈0.01(작음), 0.06(중간), 0.14(큼).\n또는 Cohen's f: 0.10(작음), 0.25(중간), 0.40(큼).",
+    "kruskal": "ε²(epsilon squared): 대략 0.01(작음), 0.08(중간), 0.26(큼) 경험칙을 종종 사용합니다.\n(문헌/분야에 따라 기준이 다를 수 있습니다.)",
+
+    # categorical
+    "chi2_contingency": "Cramer's V: (2×2에서는) 0.10(작음), 0.30(중간), 0.50(큼).\n표가 커질수록 동일 V라도 의미가 달라질 수 있어 맥락을 함께 보세요.",
+    "chi2_gof": "Cohen's w: 0.10(작음), 0.30(중간), 0.50(큼).",
+    "fisher_exact": "Odds ratio(OR): 1이면 차이 없음.\nOR은 비대칭 척도이므로 log(OR)로 생각하거나, 임상적 기준/리스크 차이도 함께 제시하는 것이 좋습니다.",
+
+    # models
+    "ols": "회귀: R²≈0.02(작음), 0.13(중간), 0.26(큼) 경험칙(분야 의존).\n표준화 회귀계수(β)나 부분 R²도 함께 보세요.",
+    "logit": "로지스틱: OR=1이면 효과 없음.\nOR은 단위/스케일에 민감하므로, 의미 있는 단위로 재스케일하거나 예측확률 변화(마진 효과)도 함께 제시를 권장합니다.",
+    # proportions
+    "prop_1sample_ztest": "Cohen's h(비율): h = 2·arcsin(√p1) − 2·arcsin(√p2).\n|h|≈0.2(작음), 0.5(중간), 0.8(큼) 경험칙.\n※ p가 0이나 1에 가까우면 해석이 민감할 수 있습니다.",
+    "prop_2sample_ztest": "Cohen's h(비율 차이): |h|≈0.2(작음), 0.5(중간), 0.8(큼) 경험칙.\n(두 비율 p1, p2에 대해 h = 2·arcsin(√p1) − 2·arcsin(√p2))",
+
+    # rank/ordinal agreement
+    "kendall_w": "Kendall's W(일치도, 0~1): 0이면 일치 없음, 1이면 완전 일치.\n경험칙 예: W≈0.1 약함, 0.3 보통, 0.5 강함(분야 의존).\n보통 Friedman 검정과 함께 보고합니다.",
+
+    # dominance (nonparametric effect size)
+    "cliffs_delta": "Cliff's delta(δ, -1~1): 두 집단의 우월 확률 기반 효과크기.\n경험칙(절대값): |δ|<0.147 무시, <0.33 작음, <0.474 중간, 그 이상 큼.\nRBC와 함께/대신 보고되기도 합니다.",
+
+}
 
 def show_snippet(key: str) -> None:
     if key not in TEST_SNIPPETS:
         print_node("내부 오류", f"TEST_SNIPPETS 키가 없습니다: {key}")
         return
     title, detail, code = TEST_SNIPPETS[key]
+
+    # --- Apply the user's alternative choice (two-sided / less / greater) ---
+    # If the snippet uses an `alternative=` argument, define a shared variable and wire it in.
+    # This keeps the printed code consistent with the decision-tree choice.
+    global CURRENT_ALT
+    if "alternative" in code:
+        ensure_alternative_selected()
+        code = code.replace('alternative="two-sided"', 'alternative=alternative')
+        code = code.replace("alternative='two-sided'", "alternative=alternative")
+        code = code.replace('alternative="greater"', 'alternative=alternative')
+        code = code.replace("alternative='greater'", "alternative=alternative")
+        code = code.replace('alternative="less"', 'alternative=alternative')
+        code = code.replace("alternative='less'", "alternative=alternative")
+        code = f'alternative = "{CURRENT_ALT}"  # "two-sided" | "greater" | "less"\n' + code
+
     print_node(title, detail, code)
+    if key in EFFECT_GUIDE:
+        print_node("효과크기 해석 기준(경험칙)", EFFECT_GUIDE[key], "")
 
 
 def show_assumption(key: str) -> None:
@@ -905,6 +1504,8 @@ def show_assumption(key: str) -> None:
         return
     title, detail, code = ASSUMPTION_SNIPPETS[key]
     print_node(title, detail, code)
+    if key in EFFECT_GUIDE:
+        print_node("효과크기 해석 기준(경험칙)", EFFECT_GUIDE[key], "")
 
 
 # ----------------------------
@@ -934,7 +1535,6 @@ def run_once() -> Dict[str, Any]:
     )
 
     result: Dict[str, Any] = {"final_tests": [], "notes": []}
-
     goal = ask_choice(
         "목표가 무엇인가요?",
         [
@@ -1052,7 +1652,7 @@ def run_once() -> Dict[str, Any]:
                 var_equal = ask_yes_no("분산이 같아 보이나요? (Levene p ≥ α)")
 
                 if normal_fail:
-                    print("\n[참고] 3집단 이상 비모수 비교(Kruskal) 이후 사후분석에서는, 표본이 매우 작거나 동점(ties)이 많아\n"
+                    print("\\n[참고] 3집단 이상 비모수 비교(Kruskal) 이후 사후분석에서는, 표본이 매우 작거나 동점(ties)이 많아\n"
                           "정확한 근사에 불안이 있으면 Monte Carlo / resampling 기반 방법을 참고하는 경우가 있습니다.\n")
                     show_snippet("kruskal")
                     show_snippet("posthoc_dunn")
@@ -1245,8 +1845,117 @@ print("Q =", stat, "p =", p_value)
 
         # 카운트 outcome
         if ytype == "count":
+            # ── 최소 질문 UX: 카운트는 3가지로만 분기합니다. (분포/교차표/발생률)
+            count_scenario = ask_choice(
+                "카운트 자료는 어떤 상황인가요?",
+                [
+                    ("gof", "① 하나의 범주 분포가 기대 분포(이론/균등/알려진 비율)와 같은가? (예: 주사위 공정성)"),
+                    ("ind", "② 두 범주형 변수 사이에 관련(독립성)이 있는가? (예: 성별×합격여부 교차표)"),
+                    ("rate", "③ 시간/노출량 대비 사건 발생 횟수(발생률)를 비교/모형화 (예: 사고 건수/인-년)"),
+                ],
+            )
+
+            if count_scenario == "gof":
+                # 1) 항상 Cochran 조건 확인용 코드를 먼저 제공합니다.
+                show_snippet("chi2_gof_cochran_check")
+
+                cochran_res = ask_choice(
+                    "Cochran 조건 결과는 어땠나요?",
+                    [
+                        ("ok", "조건 만족(OK)"),
+                        ("bad", "조건 위반(VIOLATED)"),
+                    ],
+                )
+
+                if cochran_res == "ok":
+                    show_snippet("chi2_gof")
+                    result["final_tests"] = ["chi2_gof"]
+                    return result
+
+                # Cochran 위반 시: 대안 선택(가이드)
+                alt = ask_choice(
+                    "Cochran 위반 시 어떤 대안을 사용할까요?",
+                    [
+                        ("collapse", "범주 병합(collapsing categories) 후 카이제곱"),
+                        ("mc", "Monte Carlo 시뮬레이션(권장)"),
+                    ],
+                )
+                if alt == "collapse":
+                    show_snippet("chi2_gof_collapse")
+                    result["final_tests"] = ["chi2_gof_collapse"]
+                else:
+                    show_snippet("chi2_gof_mc")
+                    result["final_tests"] = ["chi2_gof_mc"]
+                return result
+
+
+            if count_scenario == "ind":
+                # 1) 항상 Cochran 조건 확인용 코드를 먼저 제공합니다.
+                show_snippet("chi2_ind_cochran_check")
+
+                cochran_res = ask_choice(
+                    "Cochran 조건 결과는 어땠나요?",
+                    [
+                        ("ok", "조건 만족(OK)"),
+                        ("bad", "조건 위반(VIOLATED)"),
+                    ],
+                )
+
+                if cochran_res == "ok":
+                    show_snippet("chi2_contingency")
+                    result["final_tests"] = ["chi2_contingency"]
+                    return result
+
+                # Cochran 위반 시: 표 크기에 따라 대안이 달라집니다.
+                shape = ask_choice(
+                    "교차표 크기는 무엇인가요?",
+                    [
+                        ("2x2", "2×2 교차표"),
+                        ("rxk", "2×2가 아닌 R×C 교차표"),
+                    ],
+                )
+
+                if shape == "2x2":
+                    alt = ask_choice(
+                        "Cochran 위반(2×2) 시 어떤 대안을 사용할까요?",
+                        [
+                            ("fisher", "Fisher 정확검정(권장)"),
+                            ("mc", "Monte Carlo 근사"),
+                        ],
+                    )
+                    if alt == "fisher":
+                        show_snippet("fisher_exact")
+                        result["final_tests"] = ["fisher_exact"]
+                    else:
+                        show_snippet("chi2_ind_mc")
+                        result["final_tests"] = ["chi2_ind_mc"]
+                    return result
+
+                # R×C (2×2 아님)
+                alt = ask_choice(
+                    "Cochran 위반(R×C) 시 어떤 대안을 사용할까요?",
+                    [
+                        ("collapse", "범주 병합(collapsing categories) 후 카이제곱"),
+                        ("ffh", "Fisher–Freeman–Halton(FFH) 정확검정(가능하면)"),
+                        ("mc", "Monte Carlo 근사(권장)"),
+                    ],
+                )
+
+                if alt == "collapse":
+                    show_snippet("chi2_ind_collapse")
+                    result["final_tests"] = ["chi2_ind_collapse"]
+                elif alt == "ffh":
+                    show_snippet("ffh_exact")
+                    result["final_tests"] = ["ffh_exact"]
+                else:
+                    show_snippet("chi2_ind_mc")
+                    result["final_tests"] = ["chi2_ind_mc"]
+                return result
+
+
+            # count_scenario == "rate": 사건 발생 횟수(발생률/포아송) 흐름
             goal2 = ask_choice(
-                "카운트 자료: 목표가 무엇인가요?",
+                "사건 발생 횟수: 목표가 무엇인가요?",
                 [("compare_rates", "집단 간 발생률(rate) 비교"), ("model", "설명변수로 카운트를 모형화")],
             )
             if goal2 == "compare_rates":
@@ -1255,57 +1964,19 @@ print("Q =", stat, "p =", p_value)
                     "statsmodels.stats.rates를 사용합니다. 버전에 따라 API가 달라질 수 있으니 상황에 맞게 조정하세요.",
                     """# Example sketch (API may vary):
 # from statsmodels.stats.rates import test_poisson_2indep
-# res = test_poisson_2indep(count1, exposure1, count2, exposure2)
+# count1, exposure1 = 30, 1000  # 사건 수, 노출량(예: person-time)
+# count2, exposure2 = 10, 800
+# res = test_poisson_2indep(count1, exposure1, count2, exposure2, method="score")
 # print(res)
-"""
+""",
                 )
-                result["final_tests"] = ["poisson_rates_test"]
+                result["final_tests"] = ["poisson_rate_test"]
+                return result
             else:
                 show_snippet("poisson_glm")
                 result["final_tests"] = ["poisson_glm"]
-            return result
+                return result
 
-    # ---------------- 연관성 ----------------
-    if goal == "assoc":
-        vtype = ask_choice(
-            "연관성 분석: 변수 유형은 무엇인가요?",
-            [
-                ("cont_norm", "연속형 2개(대략 정규, 선형)"),
-                ("cont_non", "연속형 non-normal or ordinal"),
-                ("cat_cat", "범주형 vs 범주형"),
-                ("bin_pred", "이진형 outcome with predictors"),
-            ],
-        )
-        if vtype == "cont_norm":
-            # workflow: optionally check normality via Shapiro+QQ on x and y
-            show_assumption("normality_shapiro")
-            _ = ask_yes_no("Pearson 상관을 진행할까요? (대략 정규/선형 가정)")
-            show_snippet("pearsonr")
-            result["final_tests"] = ["pearsonr"]
-            return result
-        if vtype == "cont_non":
-            show_snippet("spearmanr")
-            result["final_tests"] = ["spearmanr"]
-            return result
-        if vtype == "cat_cat":
-            show_snippet("chi2_contingency")
-            result["final_tests"] = ["chi2_contingency"]
-            return result
-        if vtype == "bin_pred":
-            show_snippet("logit")
-            result["final_tests"] = ["logit"]
-            return result
-
-    # ---------------- Modeling ----------------
-    if goal == "model":
-        ytype = ask_choice(
-            "모형화: 결과변수 유형은 무엇인가요?",
-            [
-                ("continuous", "연속형"),
-                ("binary", "이진형"),
-                ("count", "카운트"),
-            ],
-        )
         if ytype == "continuous":
             show_snippet("ols")
             result["final_tests"] = ["ols"]
@@ -1426,12 +2097,50 @@ def main() -> None:
             break
 
 
+
+def run_fuzz(iterations: int = 100, seed: int = 1234) -> None:
+    """Automatically traverse the decision tree with valid choices to catch runtime crashes."""
+    import random
+    import contextlib
+    import io
+
+    rnd = random.Random(seed)
+
+    def auto_choice(prompt: str, choices):
+        if not choices:
+            raise ValueError("No choices provided")
+        # deterministic but varied
+        idx = rnd.randrange(len(choices))
+        return choices[idx][0]
+
+    def auto_yes_no(prompt: str) -> bool:
+        return auto_choice(prompt, [("y","yes"),("n","no")]) == "y"
+
+    global ask_choice, ask_yes_no, CURRENT_ALT
+    saved_choice, saved_yesno, saved_alt = ask_choice, ask_yes_no, CURRENT_ALT
+    try:
+        ask_choice = auto_choice
+        ask_yes_no = auto_yes_no
+        # silence printing during fuzz
+        with contextlib.redirect_stdout(io.StringIO()):
+            for _ in range(iterations):
+                CURRENT_ALT = None
+                run_once()
+        print(f"[FUZZ] OK: ran run_once() {iterations} times without crashing. (seed={seed})")
+    finally:
+        ask_choice, ask_yes_no, CURRENT_ALT = saved_choice, saved_yesno, saved_alt
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="통계 검정 선택기(CLI)")
     parser.add_argument("--smoketest", action="store_true", help="문법/의존성/스니펫 컴파일 자체 점검을 실행하고 종료합니다.")
+    parser.add_argument("--fuzz", type=int, default=0, help="결정 트리를 자동 입력으로 N회 실행해 런타임 크래시를 점검합니다.")
+    parser.add_argument("--seed", type=int, default=1234, help="--fuzz 실행 시 난수 시드")
     args = parser.parse_args()
     if args.smoketest:
         run_smoketest()
+    elif args.fuzz and args.fuzz > 0:
+        run_fuzz(iterations=args.fuzz, seed=args.seed)
     else:
         main()

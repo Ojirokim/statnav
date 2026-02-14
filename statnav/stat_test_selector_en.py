@@ -1,13 +1,49 @@
+
+# ==========================================================
+# UNIFIED INPUT CHECKLIST (Applies to ALL statistical snippets)
+# ----------------------------------------------------------
+# 1. Data Type Requirements
+#    - Numeric samples: np.array([...], dtype=float)
+#    - Count data: non-negative integers only
+#    - Logistic regression y: binary (0 and 1 only)
+#
+# 2. Shape Requirements
+#    - One-sample tests: x → 1D array (n,)
+#    - Independent two-sample tests: a, b → two 1D arrays
+#    - Paired tests: x_before, x_after → equal-length 1D arrays
+#    - Multi-group tests: groups = [g1, g2, g3, ...]
+#    - Chi-square tests: table → 2D array (R × C), R ≥ 2, C ≥ 2
+#    - Regression:
+#         y → shape (n,)
+#         X → shape (n, p)
+#
+# 3. Data Validity
+#    - No NaN values
+#    - No infinite values
+#    - Sample size must be > 0
+#    - For proportion tests: 0 ≤ count ≤ nobs
+#
+# 4. Statistical Constraints
+#    - Chi-square expected counts should not all be zero
+#    - Logistic regression requires variability in y
+#    - Equal-length requirement for paired tests
+#
+# 5. Example Template
+#    x = np.array([1.2, 2.3, 3.4], dtype=float)
+#
+# ==========================================================
+
+
 # ============================================================
 # Statistical Test Selection & Inference Assistant (CLI)
 # ------------------------------------------------------------
 # Features:
-#  - Course-aligned test selection workflow
+#  - Guided test selection workflow
 #  - Assumption checks (Normality: Shapiro + Q-Q(probplot), Equal variance: Levene)
 #  - Effect sizes and confidence intervals (analytic or bootstrap guidance where applicable)
 #
-# Version: v1.1 
-# Last check: 2026-02-14  |  smoketest: PASS
+# Version: v1.2.0 
+# Last check: 2026-02-15  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
 # ============================================================
@@ -27,6 +63,9 @@ Notes:
 """
 
 from typing import Optional, List, Tuple, Dict, Any
+
+CURRENT_ALT: Optional[str] = None  # "two-sided" | "greater" | "less"
+
 
 import argparse
 import sys
@@ -49,11 +88,28 @@ def ask_choice(prompt: str, choices: List[Tuple[str, str]]) -> str:
         print("Invalid selection. Try again.")
 
 
+
+def ensure_alternative_selected() -> str:
+    """Ask for alternative (one-/two-sided) only once, and only when a test needs it."""
+    global CURRENT_ALT
+    if CURRENT_ALT is None:
+        CURRENT_ALT = ask_choice(
+            "Choose the alternative hypothesis (decide *before* looking at data)",
+            [
+                ("two-sided", "Two-sided"),
+                ("greater", "One-sided: greater"),
+                ("less", "One-sided: less"),
+            ],
+        )
+    return CURRENT_ALT
+
 def ask_yes_no(prompt: str) -> bool:
     return ask_choice(prompt, [("y", "Yes"), ("n", "No")]) == "y"
 
 
 def print_node(title: str, detail: Optional[str] = None, code: Optional[str] = None) -> None:
+    """Pretty printer for nodes. Uses copy-friendly snippet markers."""
+    import sys
     print("\n" + "=" * 72)
     print(title)
     if detail:
@@ -61,8 +117,11 @@ def print_node(title: str, detail: Optional[str] = None, code: Optional[str] = N
         print(detail)
     if code:
         print("-" * 72)
-        print("Code snippet:")
-        print(code)
+        print("Code snippet (copy-friendly):")
+        print("# ---BEGIN SNIPPET---")
+        safe_code = code.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ").rstrip("\n")
+        sys.stdout.write(safe_code + "\n")
+        print("# ---END SNIPPET---")
     print("=" * 72)
 
 
@@ -131,10 +190,21 @@ print("Power =", power)
 alpha = 0.05  # TODO
 n = len(x); df = n - 1
 se = stats.sem(x)
-tcrit = stats.t.ppf(1 - alpha/2, df)
 xbar = np.mean(x)
-ci_mean = (xbar - tcrit*se, xbar + tcrit*se)
-ci_diff = ((xbar-mu0) - tcrit*se, (xbar-mu0) + tcrit*se)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df)
+tcrit_one = stats.t.ppf(1 - alpha, df)
+
+if alternative == "two-sided":
+    ci_mean = (xbar - tcrit_two*se, xbar + tcrit_two*se)
+    ci_diff = ((xbar-mu0) - tcrit_two*se, (xbar-mu0) + tcrit_two*se)
+elif alternative == "greater":
+    ci_mean = (xbar - tcrit_one*se, np.inf)
+    ci_diff = ((xbar-mu0) - tcrit_one*se, np.inf)
+else:  # "less"
+    ci_mean = (-np.inf, xbar + tcrit_one*se)
+    ci_diff = (-np.inf, (xbar-mu0) + tcrit_one*se)
+
 print(f"{int((1-alpha)*100)}% CI mean =", ci_mean)
 print(f"{int((1-alpha)*100)}% CI (mean-mu0) =", ci_diff)
 """
@@ -153,34 +223,35 @@ diff = x - mu0
 w_stat, p_value = stats.wilcoxon(diff, alternative="two-sided")  # or "less"/"greater"
 print("W =", w_stat, "p =", p_value)
 
-# Effect size r (approx) from z
+# Effect size: Rank-biserial correlation (RBC)
+# RBC = (W+ - W-) / (W+ + W-), where W+ is sum of ranks for positive differences.
 diff_nz = diff[diff != 0]
-n = len(diff_nz)
-mean_w = n * (n + 1) / 4
-var_w = n * (n + 1) * (2 * n + 1) / 24
-z = (w_stat - mean_w - 0.5) / np.sqrt(var_w)  # continuity correction
-r = z / np.sqrt(n)
-print("Effect size r (approx) =", r)
+if len(diff_nz) == 0:
+    print("All differences are zero; effect size is undefined.")
+else:
+    ranks = stats.rankdata(np.abs(diff_nz))
+    w_pos = ranks[diff_nz > 0].sum()
+    w_neg = ranks[diff_nz < 0].sum()
+    rbc = (w_pos - w_neg) / (w_pos + w_neg)
+    print("Rank-biserial correlation (RBC) =", rbc)
 
-# Bootstrap CI for r
-alpha = 0.05
-B = 2000
-rng = np.random.default_rng(0)
-boot = []
-for _ in range(B):
-    d_b = rng.choice(diff, size=len(diff), replace=True)
-    w_b, _ = stats.wilcoxon(d_b, alternative="two-sided")
-    d_nz = d_b[d_b != 0]
-    n_b = len(d_nz)
-    if n_b < 5:
-        continue
-    mean_wb = n_b * (n_b + 1) / 4
-    var_wb = n_b * (n_b + 1) * (2 * n_b + 1) / 24
-    z_b = (w_b - mean_wb - 0.5) / np.sqrt(var_wb)
-    boot.append(z_b / np.sqrt(n_b))
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for r =", ci)
+    # Bootstrap CI for RBC
+    alpha = 0.05
+    B = 2000
+    rng = np.random.default_rng(0)
+    boot = []
+    for _ in range(B):
+        d_b = rng.choice(diff, size=len(diff), replace=True)
+        d_b = d_b[d_b != 0]
+        if len(d_b) < 2:
+            continue
+        r_b = stats.rankdata(np.abs(d_b))
+        w_pos_b = r_b[d_b > 0].sum()
+        w_neg_b = r_b[d_b < 0].sum()
+        boot.append((w_pos_b - w_neg_b) / (w_pos_b + w_neg_b))
+    boot = np.sort(np.array(boot))
+    ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
+    print(f"{int((1-alpha)*100)}% bootstrap CI for RBC =", ci)
 
 # Power note: typically via simulation for Wilcoxon.
 """
@@ -211,8 +282,18 @@ print("Power =", power)
 alpha = 0.05  # TODO
 n = len(diff); df = n - 1
 se = stats.sem(diff)
-tcrit = stats.t.ppf(1 - alpha/2, df)
-ci = (np.mean(diff) - tcrit*se, np.mean(diff) + tcrit*se)
+est = np.mean(diff)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df)
+tcrit_one = stats.t.ppf(1 - alpha, df)
+
+if alternative == "two-sided":
+    ci = (est - tcrit_two*se, est + tcrit_two*se)
+elif alternative == "greater":
+    ci = (est - tcrit_one*se, np.inf)
+else:  # "less"
+    ci = (-np.inf, est + tcrit_one*se)
+
 print(f"{int((1-alpha)*100)}% CI mean(diff) =", ci)
 """
     ),
@@ -227,34 +308,34 @@ diff = x_before - x_after
 w_stat, p_value = stats.wilcoxon(diff, alternative="two-sided")
 print("W =", w_stat, "p =", p_value)
 
-# Effect size r (approx)
+# Effect size: Rank-biserial correlation (RBC)
 diff_nz = diff[diff != 0]
-n = len(diff_nz)
-mean_w = n * (n + 1) / 4
-var_w = n * (n + 1) * (2 * n + 1) / 24
-z = (w_stat - mean_w - 0.5) / np.sqrt(var_w)
-r = z / np.sqrt(n)
-print("Effect size r (approx) =", r)
+if len(diff_nz) == 0:
+    print("All differences are zero; effect size is undefined.")
+else:
+    ranks = stats.rankdata(np.abs(diff_nz))
+    w_pos = ranks[diff_nz > 0].sum()
+    w_neg = ranks[diff_nz < 0].sum()
+    rbc = (w_pos - w_neg) / (w_pos + w_neg)
+    print("Rank-biserial correlation (RBC) =", rbc)
 
-# Bootstrap CI for r
-alpha = 0.05
-B = 2000
-rng = np.random.default_rng(0)
-boot = []
-for _ in range(B):
-    d_b = rng.choice(diff, size=len(diff), replace=True)
-    w_b, _ = stats.wilcoxon(d_b, alternative="two-sided")
-    d_nz = d_b[d_b != 0]
-    n_b = len(d_nz)
-    if n_b < 5:
-        continue
-    mean_wb = n_b * (n_b + 1) / 4
-    var_wb = n_b * (n_b + 1) * (2 * n_b + 1) / 24
-    z_b = (w_b - mean_wb - 0.5) / np.sqrt(var_wb)
-    boot.append(z_b / np.sqrt(n_b))
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for r =", ci)
+    # Bootstrap CI for RBC
+    alpha = 0.05
+    B = 2000
+    rng = np.random.default_rng(0)
+    boot = []
+    for _ in range(B):
+        d_b = rng.choice(diff, size=len(diff), replace=True)
+        d_b = d_b[d_b != 0]
+        if len(d_b) < 2:
+            continue
+        r_b = stats.rankdata(np.abs(d_b))
+        w_pos_b = r_b[d_b > 0].sum()
+        w_neg_b = r_b[d_b < 0].sum()
+        boot.append((w_pos_b - w_neg_b) / (w_pos_b + w_neg_b))
+    boot = np.sort(np.array(boot))
+    ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
+    print(f"{int((1-alpha)*100)}% bootstrap CI for RBC =", ci)
 
 # Power note: typically via simulation.
 """
@@ -288,8 +369,17 @@ print("Power =", power)
 alpha = 0.05  # TODO
 mean_diff = np.mean(a) - np.mean(b)
 se_diff = spooled * np.sqrt(1/n1 + 1/n2)
-tcrit = stats.t.ppf(1 - alpha/2, df)
-ci = (mean_diff - tcrit*se_diff, mean_diff + tcrit*se_diff)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df)
+tcrit_one = stats.t.ppf(1 - alpha, df)
+
+if alternative == "two-sided":
+    ci = (mean_diff - tcrit_two*se_diff, mean_diff + tcrit_two*se_diff)
+elif alternative == "greater":
+    ci = (mean_diff - tcrit_one*se_diff, np.inf)
+else:  # "less"
+    ci = (-np.inf, mean_diff + tcrit_one*se_diff)
+
 print(f"{int((1-alpha)*100)}% CI mean difference =", ci)
 """
     ),
@@ -322,8 +412,17 @@ alpha = 0.05  # TODO
 mean_diff = np.mean(a) - np.mean(b)
 se_diff = np.sqrt(s1/n1 + s2/n2)
 df_w = (s1/n1 + s2/n2)**2 / ((s1/n1)**2/(n1-1) + (s2/n2)**2/(n2-1))
-tcrit = stats.t.ppf(1 - alpha/2, df_w)
-ci = (mean_diff - tcrit*se_diff, mean_diff + tcrit*se_diff)
+
+tcrit_two = stats.t.ppf(1 - alpha/2, df_w)
+tcrit_one = stats.t.ppf(1 - alpha, df_w)
+
+if alternative == "two-sided":
+    ci = (mean_diff - tcrit_two*se_diff, mean_diff + tcrit_two*se_diff)
+elif alternative == "greater":
+    ci = (mean_diff - tcrit_one*se_diff, np.inf)
+else:  # "less"
+    ci = (-np.inf, mean_diff + tcrit_one*se_diff)
+
 print(f"{int((1-alpha)*100)}% CI mean difference (Welch) =", ci)
 """
     ),
@@ -529,46 +628,310 @@ print(f"{int((1-alpha)*100)}% bootstrap CI for epsilon^2 =", ci)
     "chi2_contingency": (
         "Chi-square test of independence",
         "Association between categorical variables (contingency table, RxC).",
-        """import numpy as np
+        """
+import numpy as np
 from scipy import stats
 
-# table : contingency table array
-chi2, p, dof, expected = stats.chi2_contingency(table)
+# table : contingency table (observed counts) array (R×C)
+# TODO INPUT:
+# table = np.array([[...], [...], ...], dtype=int)
+
+table_np: np.ndarray = np.asarray(table, dtype=float)
+res = stats.chi2_contingency(table_np, correction=False)
+
+chi2: float = float(res.statistic)
+p: float = float(res.pvalue)
+dof: int = int(res.dof)
+expected: np.ndarray = np.asarray(res.expected_freq, dtype=float)
+
 print("chi2 =", chi2, "p =", p, "dof =", dof)
 
-# Effect size: Cramer's V
-n = table.sum()
-r, c = table.shape
-v = np.sqrt(chi2 / (n * (min(r-1, c-1))))
-print("Cramer's V =", v)
+# Effect size: Cramer's V (safe computation)
+n: float = float(table_np.sum())
+r: int
+c: int
+r, c = table_np.shape
+k: int = min(r - 1, c - 1)
+cramers_v: float = float('nan')
+if n > 0 and k > 0:
+    cramers_v = float(np.sqrt(chi2 / (n * k)))
+print("Cramer's V =", cramers_v)
 
-# Power (approx)
-from statsmodels.stats.power import GofChisquarePower
-power = GofChisquarePower().power(effect_size=v, nobs=n, alpha=0.05)
-print("Power (approx) =", power)
+# ── Post-hoc: Adjusted standardized residuals ──
+# Rule of thumb: |residual| > 2 may indicate a meaningful deviation from expectation
+row_sum = table_np.sum(axis=1, keepdims=True)
+col_sum = table_np.sum(axis=0, keepdims=True)
+row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum, dtype=float)
+col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum, dtype=float)
 
-# Bootstrap CI for Cramer's V
-alpha = 0.05
-B = 2000
-rng = np.random.default_rng(0)
-# Convert contingency table into row/col samples for resampling
-rows = np.repeat(np.arange(r), table.sum(axis=1))
-cols = np.concatenate([np.repeat(j, table[:, j].sum()) for j in range(c)])
-nobs = len(rows)
-boot = []
-for _ in range(B):
-    idx = rng.integers(0, nobs, nobs)
-    t_b = np.zeros((r, c), dtype=int)
-    for rr, cc in zip(rows[idx], cols[idx]):
-        t_b[rr, cc] += 1
-    chi2_b, _, _, _ = stats.chi2_contingency(t_b)
-    v_b = np.sqrt(chi2_b / (t_b.sum() * (min(r-1, c-1))))
-    boot.append(v_b)
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for Cramer's V =", ci)
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    resid: np.ndarray = (table_np - expected) / den
+
+# ── Readable output: labels + observed/expected/residuals ──
+import pandas as pd
+
+# Preserve labels if `table` is a DataFrame; otherwise create a labeled DataFrame
+table_df = table if hasattr(table, "index") else pd.DataFrame(table_np)
+
+rows = []
+for i, rlab in enumerate(table_df.index):
+    for j, clab in enumerate(table_df.columns):
+        z = resid[i, j]
+        rows.append({
+            "Row": rlab,
+            "Col": clab,
+            "Observed": int(table_np[i, j]),
+            "Expected": float(expected[i, j]),
+            "AdjResid": float(z) if np.isfinite(z) else float("nan"),
+            "Flag(|z|>2)": bool(np.isfinite(z) and abs(z) > 2),
+            "Direction": ("Obs>Exp" if table_np[i, j] > expected[i, j] else "Obs<Exp")
+        })
+
+out = pd.DataFrame(rows)
+out_sorted = out.sort_values("AdjResid", key=lambda s: s.abs(), ascending=False)
+
+print()\nprint("[Post-hoc] Adjusted standardized residuals summary (Top 10 by |residual|)")
+print(out_sorted.head(10).to_string(index=False))
+
+sig = out_sorted[out_sorted["Flag(|z|>2)"]]
+print()\nprint("[Post-hoc] Cells with |AdjResid| > 2 (potentially meaningful)")
+if len(sig) == 0:
+    print("(none)")
+else:
+    print(sig.to_string(index=False))
 """
     ),
+    "chi2_ind_cochran_check": (
+        "Cochran check (independence)",
+        "Check Cochran’s rule conditions before using chi-square approximation.",
+        """
+import numpy as np
+from scipy import stats
+
+# table : contingency table of observed counts (R×C)
+# table = np.array([[...], [...], ...])
+
+table_np: np.ndarray = np.asarray(table, dtype=float)
+res = stats.chi2_contingency(table_np, correction=False)
+expected: np.ndarray = np.asarray(res.expected_freq, dtype=float)
+
+# ── Cochran's rule check ──
+n_under1 = np.sum(expected < 1)
+pct_under5 = np.mean(expected < 5)
+cochran_ok = (n_under1 == 0) and (pct_under5 <= 0.20)
+
+print("shape =", table_np.shape)
+print("n_under1 =", int(n_under1))
+print("pct_under5 =", float(pct_under5))
+print("cochran_ok =", bool(cochran_ok))
+        """
+    ),
+    "chi2_ind_mc": (
+        "Chi-square independence (Monte Carlo)",
+        "When Cochran’s rule is violated, approximate p-value via Monte Carlo.",
+        """
+import numpy as np
+from scipy import stats
+
+# table : contingency table of observed counts (R×C)
+# table = np.array([[...], [...], ...])
+
+chi2_obs, p_asym, dof, expected = stats.chi2_contingency(table, correction=False)
+
+# ── Monte Carlo approximation under H0 (independence) ──
+# Template using fixed row totals and multinomial draws by column proportions.
+rng = np.random.default_rng(0)
+n_sim = 100_000
+count_extreme = 0
+
+table_np = np.asarray(table)
+
+row_sums = table_np.sum(axis=1)
+col_sums = table_np.sum(axis=0)
+n = float(table_np.sum())
+p_cols = (col_sums / n) if n > 0 else np.full_like(col_sums, 1.0 / len(col_sums), dtype=float)
+
+for _ in range(n_sim):
+    sim = np.vstack([rng.multinomial(int(rs), p_cols) for rs in row_sums])
+    chi2_s, _, _, _ = stats.chi2_contingency(sim, correction=False)
+    count_extreme += (chi2_s >= chi2_obs)
+
+p_mc = count_extreme / n_sim
+print("Primary p-value (Monte Carlo approx) =", p_mc)
+print("(Optional) chi2 =", chi2_obs, "dof =", dof, "asymptotic p =", p_asym)
+
+# Effect size (reference): Cramer's V
+r, c = table.shape
+k = min(r - 1, c - 1)
+cramers_v = np.sqrt(chi2_obs / (n * k))
+print("Cramer's V =", cramers_v)
+
+        """
+    ),
+    "chi2_ind_collapse": (
+        "Collapse categories then Chi-square independence",
+        "Template for collapsing categories, then running chi-square independence test.",
+        """
+import numpy as np
+from scipy import stats
+
+# Re-run independence test after collapsing categories (template).
+# Construct `table` for the collapsed categories.
+#
+# TODO INPUT:
+# table = np.array([[...], [...], ...], dtype=int)
+
+table_np = np.asarray(table)
+res = stats.chi2_contingency(table_np, correction=False)
+
+chi2 = float(res.statistic)
+p = float(res.pvalue)
+dof = int(res.dof)
+expected = np.asarray(res.expected_freq, dtype=float)
+
+print("chi2 =", chi2, "p =", p, "dof =", dof)
+
+# Effect size: Cramer's V (safe computation)
+n = float(table_np.sum())
+r, c = table_np.shape
+k = min(r - 1, c - 1)
+cramers_v = np.nan
+if n > 0 and k > 0:
+    cramers_v = float(np.sqrt(chi2 / (n * k)))
+print("Cramer's V =", cramers_v)
+
+# ── Post-hoc: Adjusted standardized residuals ──
+# Rule of thumb: |residual| > 2 may indicate a meaningful deviation from expectation
+row_sum = table_np.sum(axis=1, keepdims=True)
+col_sum = table_np.sum(axis=0, keepdims=True)
+row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum, dtype=float)
+col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum, dtype=float)
+
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    resid = (table_np - expected) / den
+
+for i in range(r):
+    for j in range(c):
+        val = float(resid[i, j]) if np.isfinite(resid[i, j]) else float("nan")
+        flag = "meaningful (≈sig)" if np.isfinite(val) and abs(val) > 2 else ""
+        print(f"cell[{i},{j}] resid = {val:.3f} {flag}")
+        """
+    ),
+    "ffh_exact": (
+        "Fisher–Freeman–Halton (FFH) exact test",
+        "Exact test for R×C tables (availability depends on SciPy version).",
+        """
+import numpy as np
+from scipy import stats
+import pandas as pd
+
+# table : contingency table of observed counts (R×C)
+# table = np.array([[...], [...], ...], dtype=int)
+
+table_np = np.asarray(table, dtype=float)
+r, c = table_np.shape
+N = float(table_np.sum())
+
+# ── Effect size: Cramér's V (reporting-friendly) ──
+# Even if you use an exact/Monte Carlo p-value, Cramér's V is typically computed
+# from the chi-square statistic of the same table (reporting convention).
+chi2, p_asym, dof, expected = stats.chi2_contingency(table_np, correction=False)
+k = min(r - 1, c - 1)
+cramers_v = np.sqrt(chi2 / (N * k)) if (N > 0 and k > 0) else np.nan
+print("Cramér's V =", float(cramers_v))
+
+# ── Fisher–Freeman–Halton (FFH) exact p-value ──
+# SciPy (as of many versions) supports Fisher exact only for 2×2.
+# If your SciPy supports RxC FFH in the future, this may work; otherwise we fall back.
+try:
+    res = stats.fisher_exact(table_np)
+    # If supported, res may be (statistic, pvalue) or a SignificanceResult
+    p_exact = getattr(res, "pvalue", res[1])
+    print("FFH exact p =", float(p_exact))
+except Exception as e:
+    print("FFH exact test not available in this SciPy version.")
+    print("Fallback: Monte Carlo approximation under H0 (independence).")
+
+    rng = np.random.default_rng(0)
+    n_sim = 100_000
+    chi2_obs = float(chi2)
+
+    row_sums = table_np.sum(axis=1).astype(int)
+    col_sums = table_np.sum(axis=0)
+    p_cols = (col_sums / col_sums.sum()) if col_sums.sum() > 0 else np.full(c, 1.0/c)
+
+    count_extreme = 0
+    for _ in range(n_sim):
+        sim = np.vstack([rng.multinomial(int(rs), p_cols) for rs in row_sums])
+        chi2_sim, _, _, _ = stats.chi2_contingency(sim, correction=False)
+        count_extreme += (chi2_sim >= chi2_obs)
+
+    p_mc = count_extreme / n_sim
+    print("Monte Carlo p (approx) =", float(p_mc))
+
+# ── Post-hoc 1: adjusted standardized residuals (cell diagnostics) ──
+row_sum = table_np.sum(axis=1, keepdims=True)
+col_sum = table_np.sum(axis=0, keepdims=True)
+row_prop = row_sum / N if N > 0 else np.zeros_like(row_sum)
+col_prop = col_sum / N if N > 0 else np.zeros_like(col_sum)
+
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    adj_resid = (table_np - expected) / den
+
+# Labeled output: keep index/columns if input is a DataFrame
+table_df = table if isinstance(table, pd.DataFrame) else pd.DataFrame(table_np)
+out = pd.DataFrame(adj_resid, index=table_df.index, columns=table_df.columns)
+print("
+[Post-hoc] Adjusted standardized residuals (z-like)")
+print(out.round(3))
+
+# ── Post-hoc 2 (optional): pairwise Fisher exact (only when C==2) ──
+# If your table is (R×2), you can compare rows pairwise using 2×2 Fisher tests
+# with multiple-comparisons correction.
+if c == 2 and r >= 3:
+    from itertools import combinations
+
+    def holm_adjust(pvals):
+        pvals = np.asarray(pvals, dtype=float)
+        m = len(pvals)
+        order = np.argsort(pvals)
+        adj = np.empty(m, dtype=float)
+        prev = 0.0
+        for k_i, idx in enumerate(order):
+            rank = k_i + 1
+            val = (m - rank + 1) * pvals[idx]
+            val = max(val, prev)  # enforce monotonicity
+            prev = val
+            adj[idx] = min(1.0, val)
+        return adj
+
+    rows = []
+    pvals = []
+    pairs = list(combinations(range(r), 2))
+    for i, j in pairs:
+        sub = np.vstack([table_np[i, :], table_np[j, :]]).astype(int)
+        _, p = stats.fisher_exact(sub)
+        pvals.append(p)
+        rows.append({
+            "row_i": table_df.index[i] if "table_df" in locals() else i,
+            "row_j": table_df.index[j] if "table_df" in locals() else j,
+            "p_fisher": float(p)
+        })
+
+    adj = holm_adjust(pvals)
+    for rr, p_adj in zip(rows, adj):
+        rr["p_holm"] = float(p_adj)
+
+    df = pd.DataFrame(rows)
+    print("\n[Post-hoc] Pairwise Fisher exact tests between rows (Holm-adjusted)")
+    print(df.sort_values("p_holm").to_string(index=False))
+"""
+
+    ),
+
     "fisher_exact": (
         "Fisher's exact test (2x2)",
         "Use when expected counts are small in a 2x2 table.",
@@ -576,19 +939,43 @@ print(f"{int((1-alpha)*100)}% bootstrap CI for Cramer's V =", ci)
 from scipy import stats
 from statsmodels.stats.contingency_tables import Table2x2
 
-table = np.array([[a, b],
-                  [c, d]])
+# 2×2 contingency table (observed counts)
+# table = np.array([[a, b],
+#                   [c, d]])
 
-oddsratio, p_value = stats.fisher_exact(table, alternative="two-sided")
-print("OR =", oddsratio, "p =", p_value)
+# Fisher exact test (2×2)
+oddsratio, p_value = stats.fisher_exact(table, alternative="two-sided")  # or "less"/"greater"
+print("OR (scipy) =", oddsratio, "p =", p_value)
 
 # Exact/conditional CI for OR (statsmodels)
-t = Table2x2(table)
-ci_low, ci_high = t.oddsratio_confint()
-print("OR 95% CI =", (ci_low, ci_high))
+t22 = Table2x2(table)
+ci_low, ci_high = t22.oddsratio_confint(alpha=0.05, method="exact")
+print("OR 95% CI (exact) =", (ci_low, ci_high))
 
-# Power note: typically via simulation or specialized routines.
+# ── Effect size: Phi coefficient (φ) ──
+# For 2×2 tables, φ is equivalent to Cramér's V.
+# φ = sqrt(chi2 / N)
+chi2, p_chi2, dof, expected = stats.chi2_contingency(table, correction=False)
+N = table.sum()
+phi = np.sqrt(chi2 / N) if N > 0 else np.nan
+print("Phi (φ) =", float(phi))
+
+# (Optional) Cell-level check: adjusted standardized residuals
+row_sum = table.sum(axis=1, keepdims=True)
+col_sum = table.sum(axis=0, keepdims=True)
+row_prop = row_sum / N if N > 0 else np.zeros_like(row_sum, dtype=float)
+col_prop = col_sum / N if N > 0 else np.zeros_like(col_sum, dtype=float)
+
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide="ignore", invalid="ignore"):
+    adj_resid = (table - expected) / den
+print("Adjusted standardized residuals:\n", adj_resid)
+
+# Post-hoc note:
+# - For a 2×2 table, Fisher exact is already the single comparison;
+#   there is no standard 'post-hoc' beyond reporting OR/CI, φ, and residuals.
 """
+
     ),
     "mcnemar": (
         "McNemar test (paired binary)",
@@ -742,14 +1129,28 @@ n = len(x)
 xbar = np.mean(x)
 
 z = (xbar - mu0) / (sigma / np.sqrt(n))
-p_two = 2 * stats.norm.sf(abs(z))  # two-sided
-print("z =", z, "p (two-sided) =", p_two)
+
+# p-value by alternative
+if alternative == "two-sided":
+    p_value = 2 * stats.norm.sf(abs(z))
+elif alternative == "greater":
+    p_value = stats.norm.sf(z)
+else:  # "less"
+    p_value = stats.norm.cdf(z)
+print("z =", z, f"p ({alternative}) =", p_value)
 
 # CI for mean (z-based)
 alpha = 0.05
-zcrit = stats.norm.ppf(1 - alpha/2)
-ci = (xbar - zcrit * sigma/np.sqrt(n), xbar + zcrit * sigma/np.sqrt(n))
-print("95% CI for mean =", ci)
+zcrit_two = stats.norm.ppf(1 - alpha/2)
+zcrit_one = stats.norm.ppf(1 - alpha)
+
+if alternative == "two-sided":
+    ci = (xbar - zcrit_two * sigma/np.sqrt(n), xbar + zcrit_two * sigma/np.sqrt(n))
+elif alternative == "greater":
+    ci = (xbar - zcrit_one * sigma/np.sqrt(n), np.inf)
+else:  # "less"
+    ci = (-np.inf, xbar + zcrit_one * sigma/np.sqrt(n))
+print("CI for mean =", ci)
 """
     ),
 
@@ -832,40 +1233,144 @@ print("Power (given nobs1,nobs2) =", power)
     "chi2_gof": (
         "Chi-square goodness-of-fit",
         "Test whether observed counts match a specified expected distribution (one categorical variable).",
-        """import numpy as np
+        """
+import numpy as np
 from scipy import stats
 
-# Observed counts for k categories
-observed = np.array([30, 50, 20])   # TODO
+# Observed counts
+# observed = np.array([o1, o2, o3, ...])
 
-# Option A: expected proportions (must sum to 1)
-expected_props = np.array([0.3, 0.5, 0.2])  # TODO
-expected = expected_props * observed.sum()
+# Expected probabilities (sum=1) or expected counts (sum=n)
+# expected_probs = np.array([...])  # sum=1
+# expected = expected_probs * observed.sum()
 
-chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
-print("chi2 =", chi2, "p =", p)
-
-# Effect size: Cohen's w
 n = observed.sum()
+
+# ── Chi-square goodness-of-fit (asymptotic) ──
+chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
+df = len(observed) - 1
+print("chi2 =", chi2, "df =", df, "p =", p)
+
+# Effect size (recommended): Cohen's w (GOF)
 w = np.sqrt(chi2 / n)
 print("Cohen's w =", w)
 
-# Bootstrap CI for w
-alpha = 0.05
-B = 2000
-rng = np.random.default_rng(0)
-boot = []
-for _ in range(B):
-    obs_b = rng.multinomial(n, observed/observed.sum())
-    chi2_b, _ = stats.chisquare(f_obs=obs_b, f_exp=expected_props * n)
-    boot.append(np.sqrt(chi2_b / n))
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for w =", ci)
+# ── Post-hoc: standardized residuals ──
+# standardized residual = (observed - expected) / sqrt(expected)
+# Rule of thumb: |residual| > 2 may indicate meaningful deviation
+std_residuals = (observed - expected) / np.sqrt(expected)
+for i, r in enumerate(std_residuals):
+    flag = "possibly meaningful" if abs(r) > 2 else ""
+    print(f"category[{i}] std resid = {r:.3f} {flag}")
 
-# Note: if you estimated parameters from the data, adjust df accordingly (advanced).
 """
     ),
+    "chi2_gof_cochran_check": (
+        "Cochran check (GOF)",
+        "Check Cochran’s rule conditions before using chi-square approximation.",
+        """
+import numpy as np
+
+# Observed counts
+# observed = np.array([o1, o2, o3, ...])
+
+# Expected probabilities (sum=1) or expected counts (sum=n)
+# expected_probs = np.array([...])  # sum=1
+# expected = expected_probs * observed.sum()
+
+# ── Cochran's rule check (chi-square approximation conditions) ──
+# (1) <= 20% of expected cells are < 5, AND
+# (2) no expected cell is < 1
+n_under1 = np.sum(expected < 1)
+pct_under5 = np.mean(expected < 5)
+cochran_ok = (n_under1 == 0) and (pct_under5 <= 0.20)
+
+print("n_under1 =", int(n_under1))
+print("pct_under5 =", float(pct_under5))
+print("cochran_ok =", bool(cochran_ok))
+
+        """
+    ),
+    "chi2_gof_mc": (
+        "Chi-square GOF (Monte Carlo)",
+        "When Cochran’s rule is violated, approximate p-value via Monte Carlo simulation.",
+        """
+import numpy as np
+from scipy import stats
+
+# Observed counts
+# observed = np.array([o1, o2, o3, ...])
+
+# Expected probabilities (sum=1)
+# expected_probs = np.array([...])  # sum=1
+
+n = int(observed.sum())
+expected = expected_probs * n
+
+# Observed chi-square statistic (for reference)
+chi2_obs, p_asym = stats.chisquare(f_obs=observed, f_exp=expected)
+df = len(observed) - 1
+
+# ── Monte Carlo simulation under H0 (multinomial) ──
+rng = np.random.default_rng(0)
+n_sim = 100_000  # TODO: number of simulations
+count_extreme = 0
+for _ in range(n_sim):
+    samp = rng.multinomial(n, expected_probs)
+    chi2_s, _ = stats.chisquare(f_obs=samp, f_exp=expected)
+    count_extreme += (chi2_s >= chi2_obs)
+
+p_mc = count_extreme / n_sim
+print("Primary p-value (Monte Carlo) =", p_mc)
+print("(Optional) chi2 =", chi2_obs, "df =", df, "asymptotic p =", p_asym)
+
+# Effect size: Cohen's w (GOF)
+w = np.sqrt(chi2_obs / n)
+print("Cohen's w =", w)
+
+# Post-hoc: standardized residuals (print only |r| > 2)
+std_residuals = (observed - expected) / np.sqrt(expected)
+for i, r in enumerate(std_residuals):
+    if abs(r) > 2:
+        print(f"category[{i}] std resid = {r:.3f}")
+
+        """
+    ),
+    "chi2_gof_collapse": (
+        "Collapse categories then Chi-square GOF",
+        "Template for collapsing categories, then running GOF chi-square.",
+        """
+import numpy as np
+from scipy import stats
+
+# Re-run GOF after collapsing categories (template).
+# Construct `observed` and `expected_probs` for the collapsed categories.
+
+# Example: collapse 6 categories into (0-2) and (3-5):
+# observed_raw = np.array([o1, o2, o3, o4, o5, o6])
+# observed = np.array([observed_raw[:3].sum(), observed_raw[3:].sum()])
+#
+# expected_probs_raw = np.ones(6) / 6
+# expected_probs = np.array([expected_probs_raw[:3].sum(), expected_probs_raw[3:].sum()])
+
+n = int(observed.sum())
+expected = expected_probs * n
+
+chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
+df = len(observed) - 1
+print("chi2 =", chi2, "df =", df, "p =", p)
+
+w = np.sqrt(chi2 / n)
+print("Cohen's w =", w)
+
+std_residuals = (observed - expected) / np.sqrt(expected)
+for i, r in enumerate(std_residuals):
+    flag = "possibly meaningful" if abs(r) > 2 else ""
+    print(f"category[{i}] std resid = {r:.3f} {flag}")
+
+        """
+    ),
+
 
     # Permutation test (independent two-sample) — advanced
     "perm_ind_diff_means": (
@@ -919,12 +1424,65 @@ print(res)
 }
 
 
+
+# ----------------------------
+# Effect size interpretation guides (rules of thumb)
+# ----------------------------
+
+EFFECT_GUIDE: Dict[str, str] = {
+    "one_sample_t": "Cohen's d: |d|≈0.2(small), 0.5(medium), 0.8(large).  \nHedges' g is often interpreted with the same cutoffs.  \nContext/domain benchmarks matter most.",
+    "paired_t": "Paired Cohen's d: |d|≈0.2(small), 0.5(medium), 0.8(large).  \nPaired designs can make the same d more practically meaningful (less noise).",
+    "ind_t_student": "Cohen's d / Hedges' g: |d|≈0.2(small), 0.5(medium), 0.8(large).  \nPrefer g for small samples.",
+    "ind_t_welch": "Cohen's d / Hedges' g: |d|≈0.2(small), 0.5(medium), 0.8(large).",
+    "one_sample_z_mean": "Standardized mean difference (d-like): |d|≈0.2(small), 0.5(medium), 0.8(large).",
+
+    "pearsonr": "Correlation r: |r|≈0.1(small), 0.3(medium), 0.5(large).  \nr^2 is variance explained (for linear association).",
+    "spearmanr": "Rank correlation rho: |rho|≈0.1(small), 0.3(medium), 0.5(large).",
+
+    "paired_wilcoxon": "Rank-biserial correlation (RBC): often interpreted like |r|≈0.1/0.3/0.5 (small/medium/large).  \nAlternative rule: Cliff's delta cutoffs (|δ|<0.147 negligible, <0.33 small, <0.474 medium, else large).",
+    "mannwhitney": "Rank-biserial correlation (RBC): often interpreted like |r|≈0.1/0.3/0.5.  \nAlternative: Cliff's delta cutoffs (|δ|<0.147 negligible, <0.33 small, <0.474 medium, else large).",
+
+    "anova_oneway": "η²: ≈0.01(small), 0.06(medium), 0.14(large).  \nOr Cohen's f: 0.10(small), 0.25(medium), 0.40(large).",
+    "kruskal": "ε²: often 0.01(small), 0.08(medium), 0.26(large) as a rough rule (field-dependent).",
+
+    "chi2_contingency": "Cramer's V: (for 2×2) 0.10(small), 0.30(medium), 0.50(large).  \nFor larger tables, interpretation depends on degrees of freedom/context.",
+    "chi2_gof": "Cohen's w: 0.10(small), 0.30(medium), 0.50(large).",
+    "fisher_exact": "Odds ratio (OR): OR=1 no effect.  \nBecause OR is asymmetric, consider log(OR), risk difference, and domain thresholds.",
+
+    "ols": "Regression: R²≈0.02(small), 0.13(medium), 0.26(large) is a common rule of thumb (highly field-dependent).  \nAlso report standardized betas or partial R².",
+    "logit": "Logistic regression: OR=1 no effect.  \nOR depends on units; consider rescaling predictors and reporting marginal effects (probability change).",
+    # proportions
+    "prop_1sample_ztest": "Cohen's h (proportions): h = 2·arcsin(√p1) − 2·arcsin(√p2).\nRule of thumb: |h|≈0.2(small), 0.5(medium), 0.8(large).\nNote: near 0/1, interpretation can be sensitive.",
+    "prop_2sample_ztest": "Cohen's h (difference in proportions): |h|≈0.2(small), 0.5(medium), 0.8(large).\n(h = 2·arcsin(√p1) − 2·arcsin(√p2))",
+
+    # rank/ordinal agreement
+    "kendall_w": "Kendall's W (concordance, 0~1): 0=no agreement, 1=perfect agreement.\nHeuristics sometimes used: W≈0.1 weak, 0.3 moderate, 0.5 strong (field-dependent).\nOften reported with the Friedman test.",
+
+    # dominance (nonparametric effect size)
+    "cliffs_delta": "Cliff's delta (δ, -1~1): dominance/probability-of-superiority effect size.\nHeuristic (absolute): |δ|<0.147 negligible, <0.33 small, <0.474 medium, otherwise large.\nSometimes used alongside (or instead of) rank-biserial r.",
+
+}
 def show_snippet(key: str) -> None:
     if key not in TEST_SNIPPETS:
         print_node("INTERNAL ERROR", f"Missing TEST_SNIPPETS key: {key}")
         return
     title, detail, code = TEST_SNIPPETS[key]
+
+    # --- Apply the user's alternative choice (two-sided / less / greater) ---
+    global CURRENT_ALT
+    if "alternative" in code:
+        ensure_alternative_selected()
+        code = code.replace('alternative="two-sided"', 'alternative=alternative')
+        code = code.replace("alternative='two-sided'", "alternative=alternative")
+        code = code.replace('alternative="greater"', 'alternative=alternative')
+        code = code.replace("alternative='greater'", "alternative=alternative")
+        code = code.replace('alternative="less"', 'alternative=alternative')
+        code = code.replace("alternative='less'", "alternative=alternative")
+        code = f'alternative = "{CURRENT_ALT}"  # "two-sided" | "greater" | "less"\n' + code
+
     print_node(title, detail, code)
+    if key in EFFECT_GUIDE:
+        print_node("Effect size interpretation (rule of thumb)", EFFECT_GUIDE[key], "")
 
 
 def show_assumption(key: str) -> None:
@@ -933,6 +1491,8 @@ def show_assumption(key: str) -> None:
         return
     title, detail, code = ASSUMPTION_SNIPPETS[key]
     print_node(title, detail, code)
+    if key in EFFECT_GUIDE:
+        print_node("Effect size interpretation (rule of thumb)", EFFECT_GUIDE[key], "")
 
 
 # ----------------------------
@@ -962,6 +1522,18 @@ def run_once() -> Dict[str, Any]:
     )
 
     result: Dict[str, Any] = {"final_tests": [], "notes": []}
+
+    # Alternative choice: this will be reflected in printed snippets (alternative=...) and one-sided CI where applicable.
+    global CURRENT_ALT
+    CURRENT_ALT = ask_choice(
+        "Choose the alternative (two-sided vs one-sided). (Best practice: decide before looking at data)",
+        [
+            ("two-sided", "Two-sided (default)"),
+            ("greater", "One-sided: greater"),
+            ("less", "One-sided: less"),
+        ],
+    )
+    result["alternative"] = CURRENT_ALT
 
     goal = ask_choice(
         "What is your goal?",
@@ -1276,67 +1848,135 @@ print("Q =", stat, "p =", p_value)
 
         # Count outcome
         if ytype == "count":
+            # ── Minimal-question UX: counts split into 3 scenarios only (distribution / contingency / rates)
+            count_scenario = ask_choice(
+                "What kind of count data do you have?",
+                [
+                    ("gof", "① One categorical distribution vs expected probabilities (e.g., fair die) — GOF"),
+                    ("ind", "② Association/independence between two categorical variables (contingency table)"),
+                    ("rate", "③ Event counts with time/exposure (rates): compare or model counts"),
+                ],
+            )
+
+            if count_scenario == "gof":
+                # 1) Always show Cochran check snippet first.
+                show_snippet("chi2_gof_cochran_check")
+
+                cochran_res = ask_choice(
+                    "What was the Cochran check result?",
+                    [
+                        ("ok", "Passed (OK)"),
+                        ("bad", "Violated"),
+                    ],
+                )
+
+                if cochran_res == "ok":
+                    show_snippet("chi2_gof")
+                    result["final_tests"] = ["chi2_gof"]
+                    return result
+
+                alt = ask_choice(
+                    "If Cochran’s rule is violated, which alternative will you use?",
+                    [
+                        ("collapse", "Collapse categories then chi-square"),
+                        ("mc", "Monte Carlo simulation (recommended)"),
+                    ],
+                )
+                if alt == "collapse":
+                    show_snippet("chi2_gof_collapse")
+                    result["final_tests"] = ["chi2_gof_collapse"]
+                else:
+                    show_snippet("chi2_gof_mc")
+                    result["final_tests"] = ["chi2_gof_mc"]
+                return result
+
+
+            if count_scenario == "ind":
+                # 1) Always show Cochran check snippet first.
+                show_snippet("chi2_ind_cochran_check")
+
+                cochran_res = ask_choice(
+                    "What was the Cochran check result?",
+                    [
+                        ("ok", "Passed (OK)"),
+                        ("bad", "Violated"),
+                    ],
+                )
+
+                if cochran_res == "ok":
+                    show_snippet("chi2_contingency")
+                    result["final_tests"] = ["chi2_contingency"]
+                    return result
+
+                shape = ask_choice(
+                    "What is the table size?",
+                    [
+                        ("2x2", "2×2 contingency table"),
+                        ("rxk", "R×C (not 2×2)"),
+                    ],
+                )
+
+                if shape == "2x2":
+                    alt = ask_choice(
+                        "Cochran violated (2×2): choose an alternative",
+                        [
+                            ("fisher", "Fisher's exact test (recommended)"),
+                            ("mc", "Monte Carlo approximation"),
+                        ],
+                    )
+                    if alt == "fisher":
+                        show_snippet("fisher_exact")
+                        result["final_tests"] = ["fisher_exact"]
+                    else:
+                        show_snippet("chi2_ind_mc")
+                        result["final_tests"] = ["chi2_ind_mc"]
+                    return result
+
+                alt = ask_choice(
+                    "Cochran violated (R×C): choose an alternative",
+                    [
+                        ("collapse", "Collapse categories then chi-square"),
+                        ("ffh", "Fisher–Freeman–Halton (FFH) exact test (if available)"),
+                        ("mc", "Monte Carlo approximation (recommended)"),
+                    ],
+                )
+
+                if alt == "collapse":
+                    show_snippet("chi2_ind_collapse")
+                    result["final_tests"] = ["chi2_ind_collapse"]
+                elif alt == "ffh":
+                    show_snippet("ffh_exact")
+                    result["final_tests"] = ["ffh_exact"]
+                else:
+                    show_snippet("chi2_ind_mc")
+                    result["final_tests"] = ["chi2_ind_mc"]
+                return result
+
+
+            # count_scenario == "rate": event counts / rates / Poisson flow
             goal2 = ask_choice(
-                "Counts: what is your goal?",
+                "Event counts: what is your goal?",
                 [("compare_rates", "Compare rates between groups"), ("model", "Model counts with predictors")],
             )
             if goal2 == "compare_rates":
                 print_node(
-                    "Poisson rates test",
-                    "Use statsmodels.stats.rates. API varies by version; tailor to your context.",
+                    "Poisson rate test",
+                    "Uses statsmodels.stats.rates (API may differ by version). Adjust as needed.",
                     """# Example sketch (API may vary):
 # from statsmodels.stats.rates import test_poisson_2indep
-# res = test_poisson_2indep(count1, exposure1, count2, exposure2)
+# count1, exposure1 = 30, 1000  # events, exposure (e.g., person-time)
+# count2, exposure2 = 10, 800
+# res = test_poisson_2indep(count1, exposure1, count2, exposure2, method="score")
 # print(res)
-"""
+""",
                 )
-                result["final_tests"] = ["poisson_rates_test"]
+                result["final_tests"] = ["poisson_rate_test"]
+                return result
             else:
                 show_snippet("poisson_glm")
                 result["final_tests"] = ["poisson_glm"]
-            return result
+                return result
 
-    # ---------------- Association ----------------
-    if goal == "assoc":
-        vtype = ask_choice(
-            "Variable types for association?",
-            [
-                ("cont_norm", "Two continuous (approx normal, linear)"),
-                ("cont_non", "Continuous non-normal or ordinal"),
-                ("cat_cat", "Categorical vs categorical"),
-                ("bin_pred", "Binary outcome with predictors"),
-            ],
-        )
-        if vtype == "cont_norm":
-            # workflow: optionally check normality via Shapiro+QQ on x and y
-            show_assumption("normality_shapiro")
-            _ = ask_yes_no("Proceed with Pearson (assumes roughly normal / linear)?")
-            show_snippet("pearsonr")
-            result["final_tests"] = ["pearsonr"]
-            return result
-        if vtype == "cont_non":
-            show_snippet("spearmanr")
-            result["final_tests"] = ["spearmanr"]
-            return result
-        if vtype == "cat_cat":
-            show_snippet("chi2_contingency")
-            result["final_tests"] = ["chi2_contingency"]
-            return result
-        if vtype == "bin_pred":
-            show_snippet("logit")
-            result["final_tests"] = ["logit"]
-            return result
-
-    # ---------------- Modeling ----------------
-    if goal == "model":
-        ytype = ask_choice(
-            "Modeling: outcome type?",
-            [
-                ("continuous", "Continuous"),
-                ("binary", "Binary"),
-                ("count", "Count"),
-            ],
-        )
         if ytype == "continuous":
             show_snippet("ols")
             result["final_tests"] = ["ols"]
@@ -1430,5 +2070,78 @@ def main() -> None:
             break
 
 
+
+def run_smoketest() -> None:
+    """Compile all snippet blocks to ensure they are syntactically valid."""
+    import textwrap
+    failures = []
+    def _try_compile(name: str, code: str) -> None:
+        src = textwrap.dedent(code).strip("\n")
+        if not src:
+            return
+        compile(src, f"<snippet:{name}>", "exec")
+
+    for k, (title, desc, code) in ASSUMPTION_SNIPPETS.items():
+        try:
+            _try_compile(f"ASSUMPTION:{k}", code)
+        except Exception as e:
+            failures.append((k, title, str(e)))
+
+    for k, (title, desc, code) in TEST_SNIPPETS.items():
+        try:
+            _try_compile(f"TEST:{k}", code)
+        except Exception as e:
+            failures.append((k, title, str(e)))
+
+    if failures:
+        print("\n[SMOKETEST] Some snippets failed to compile:")
+        for k, title, msg in failures:
+            print(f" - {k} ({title}): {msg}")
+        raise SystemExit(1)
+
+    print(f"\n[SMOKETEST] OK: compiled {len(ASSUMPTION_SNIPPETS) + len(TEST_SNIPPETS)} snippets without syntax errors.")
+
+def run_fuzz(iterations: int = 200, seed: int = 1234) -> None:
+    """Automatically traverse the decision tree with valid choices to catch runtime crashes."""
+    import random
+    import contextlib
+    import io
+
+    rnd = random.Random(seed)
+
+    def auto_choice(prompt: str, choices):
+        if not choices:
+            raise ValueError("No choices provided")
+        idx = rnd.randrange(len(choices))
+        return choices[idx][0]
+
+    def auto_yes_no(prompt: str) -> bool:
+        return auto_choice(prompt, [("y","yes"),("n","no")]) == "y"
+
+    global ask_choice, ask_yes_no, CURRENT_ALT
+    saved_choice, saved_yesno, saved_alt = ask_choice, ask_yes_no, CURRENT_ALT
+    try:
+        ask_choice = auto_choice
+        ask_yes_no = auto_yes_no
+        with contextlib.redirect_stdout(io.StringIO()):
+            for _ in range(iterations):
+                CURRENT_ALT = None
+                run_once()
+        print(f"[FUZZ] OK: ran run_once() {iterations} times without crashing. (seed={seed})")
+    finally:
+        ask_choice, ask_yes_no, CURRENT_ALT = saved_choice, saved_yesno, saved_alt
+
+
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Statistical test selector (CLI)")
+    parser.add_argument("--smoketest", action="store_true")
+    parser.add_argument("--fuzz", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=1234)
+    args = parser.parse_args()
+    if args.smoketest:
+        run_smoketest()
+    elif args.fuzz and args.fuzz > 0:
+        run_fuzz(iterations=args.fuzz, seed=args.seed)
+    else:
+        main()

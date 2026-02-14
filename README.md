@@ -116,7 +116,8 @@ statnav/
 
 ├── README.md\
 ├── LICENSE\
-└── requirements.txt
+├── requirements.txt
+└── CHANGELOG.md
 
 ------------------------------------------------------------------------
 
