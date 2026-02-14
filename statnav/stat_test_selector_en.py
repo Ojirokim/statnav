@@ -9,6 +9,7 @@
 # Version: 1.0 
 # Last check: 2026-02-14  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
+# License: MIT
 # ============================================================
 
 #!/usr/bin/env python3
