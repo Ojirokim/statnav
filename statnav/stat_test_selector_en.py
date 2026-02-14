@@ -42,7 +42,7 @@
 #  - Assumption checks (Normality: Shapiro + Q-Q(probplot), Equal variance: Levene)
 #  - Effect sizes and confidence intervals (analytic or bootstrap guidance where applicable)
 #
-# Version: v1.2.0 
+# Version: v1.3.0 
 # Last check: 2026-02-15  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
@@ -520,14 +520,48 @@ print("Power =", power)
         """import numpy as np
 from statsmodels.stats.oneway import anova_oneway
 
-# Provide your data as a list of group arrays:
+alpha = 0.05  # TODO
+
+# groups: list of arrays
 groups = [g1, g2, g3]  # TODO extend
+labels = ["g1", "g2", "g3"]  # TODO keep same order as groups
 
 res = anova_oneway(groups, use_var="unequal", welch_correction=True)
-print(res)
 
-# post-hoc note:
-# If Welch's ANOVA is significant, a common post-hoc is Games-Howell.
+# ── (1) Print only what you need for interpretation ──
+F = float(res.statistic)
+p = float(res.pvalue)
+df1 = float(res.df_num)
+df2 = float(res.df_denom)
+
+print(f"[Welch ANOVA] F({df1:.0f}, {df2:.2f}) = {F:.3f}, p = {p:.4g}")
+
+if p < alpha:
+    print(f"→ p < {alpha}: evidence of mean differences across groups. (Post-hoc: Games–Howell)")
+else:
+    print(f"→ p ≥ {alpha}: insufficient evidence of mean differences across groups.")
+
+# ── (2) Overall effect size (reporting): eta^2, omega^2 ──
+all_y = np.concatenate(groups)
+grand_mean = np.mean(all_y)
+
+ss_between = sum(len(g) * (np.mean(g) - grand_mean) ** 2 for g in groups)
+ss_within = sum(np.sum((g - np.mean(g)) ** 2) for g in groups)
+ss_total = ss_between + ss_within
+
+k = len(groups)
+n = len(all_y)
+df_between = k - 1
+df_within = n - k
+ms_within = ss_within / df_within
+
+eta2 = ss_between / ss_total if ss_total > 0 else float("nan")
+omega2 = (ss_between - df_between * ms_within) / (ss_total + ms_within) if (ss_total + ms_within) > 0 else float("nan")
+
+print(f"[Effect size] eta^2 = {eta2:.4f}, omega^2 = {omega2:.4f}")
+print("  (rules of thumb) eta^2: 0.01 small, 0.06 medium, 0.14 large (context-dependent)")
+
+# For pairwise effect sizes (significant pairs only), see the Games–Howell post-hoc snippet.
 """
     ),
 
@@ -538,34 +572,100 @@ print(res)
 import pandas as pd
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-# long-format data
+alpha = 0.05  # TODO
+
+# 1) long-format data
 df = pd.DataFrame({
     "y": np.concatenate([g1, g2, g3]),   # TODO extend
     "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
 })
 
-res = pairwise_tukeyhsd(endog=df["y"], groups=df["group"], alpha=0.05)
-print(res)
+# 2) Tukey HSD
+res = pairwise_tukeyhsd(endog=df["y"], groups=df["group"], alpha=alpha)
+
+# 3) Convert summary table to DataFrame
+tbl = pd.DataFrame(res.summary().data[1:], columns=res.summary().data[0])
+# columns: group1 group2 meandiff p-adj lower upper reject
+
+print("[Tukey HSD] full table")
+print(tbl.to_string(index=False))
+
+# 4) Significant pairs only
+sig = tbl[tbl["reject"] == True].copy()
+print("\n[Tukey HSD] significant pairs (reject=True)")
+if sig.empty:
+    print("(none)")
+else:
+    print(sig.to_string(index=False))
+
+    # 5) Effect size (Hedges' g) for significant pairs
+    def hedges_g(a, b):
+        a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+        n1, n2 = len(a), len(b)
+        s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
+        sp = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
+        d = (np.mean(a) - np.mean(b)) / sp
+        J = 1 - 3 / (4*(n1+n2) - 9)
+        return J * d
+
+    group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
+
+    sig["hedges_g"] = sig.apply(lambda r: hedges_g(group_map[r["group1"]], group_map[r["group2"]]), axis=1)
+
+    out_cols = ["group1", "group2", "meandiff", "p-adj", "lower", "upper", "hedges_g"]
+    print("\n[Tukey HSD] significant pairs + effect size (Hedges' g)")
+    print(sig[out_cols].to_string(index=False))
+
+    print("\n(rule of thumb) |g|: 0.2 small, 0.5 medium, 0.8 large (context-dependent)")
 """
     ),
 
     "posthoc_games_howell": (
         "post-hoc: Games–Howell (after Welch's ANOVA)",
         "Use after a significant Welch's ANOVA (no equal-variance assumption).",
-        """# Common approach: use Pingouin's Games-Howell implementation.
+        """# Games–Howell (recommended after Welch ANOVA)
 # pip install pingouin
 
 import numpy as np
 import pandas as pd
 import pingouin as pg
 
+alpha = 0.05  # TODO
+
 df = pd.DataFrame({
     "y": np.concatenate([g1, g2, g3]),   # TODO extend
     "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
 })
 
-gh = pg.pairwise_gameshowell(dv='y', between='group', data=df)
-print(gh)
+gh = pg.pairwise_gameshowell(dv="y", between="group", data=df)
+
+print("[Games–Howell] full table")
+print(gh.to_string(index=False))
+
+sig = gh[gh["pval"] < alpha].copy()
+print("\n[Games–Howell] significant pairs (pval < alpha)")
+if sig.empty:
+    print("(none)")
+else:
+    cols = ["A", "B", "diff", "pval"]
+    if "hedges" in sig.columns:
+        cols.append("hedges")
+        print(sig[cols].to_string(index=False))
+        print("\n(rule of thumb) |g|: 0.2 small, 0.5 medium, 0.8 large")
+    else:
+        def hedges_g(a, b):
+            a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+            n1, n2 = len(a), len(b)
+            s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
+            sp = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
+            d = (np.mean(a) - np.mean(b)) / sp
+            J = 1 - 3 / (4*(n1+n2) - 9)
+            return J * d
+
+        group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
+        sig["hedges_g"] = sig.apply(lambda r: hedges_g(group_map[r["A"]], group_map[r["B"]]), axis=1)
+        print(sig[["A", "B", "diff", "pval", "hedges_g"]].to_string(index=False))
+        print("\n(rule of thumb) |g|: 0.2 small, 0.5 medium, 0.8 large")
 """
     ),
 

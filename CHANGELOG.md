@@ -9,6 +9,54 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.0] - 2026-02-15
+
+### Refactored
+
+### ANOVA Result Output Simplification
+
+- Removed raw `print(res)` output from `anova_oneway()` results.
+- Suppressed verbose internal attributes including:
+  - `means`
+  - `vars_`
+  - `nobs`
+  - `tuple`
+  - auxiliary statistic containers
+- Standardized output to display only:
+  - F statistic
+  - numerator and denominator degrees of freedom
+  - p-value
+- Implemented formatted reporting via `f-string`:
+  - `F(df1, df2) = value, p = value`
+- Added conditional interpretation block based on alpha level.
+
+---
+
+### Added
+
+### Post-Hoc Effect Size for Statistically Significant Pairs (3+ Groups)
+
+- Implemented pairwise effect size computation limited to statistically significant comparisons.
+- Tukey HSD:
+  - Computes **Cohen’s d** only when `reject == True`.
+- Games–Howell:
+  - Computes or extracts **Hedges’ g** when `pval < alpha`.
+- Kruskal–Wallis workflow:
+  - Maintains global η²_H reporting.
+  - No mean-based pairwise effect size added.
+- No expansion into additional effect size families or CI-based reporting.
+
+---
+
+### Notes
+
+- Improves output readability and interpretability.
+- Does not modify statistical logic.
+- No changes to routing, assumptions, or model selection logic.
+- Maintains backward compatibility with existing workflows.
+
+---
+
 ## [1.2.0] - 2026-02-15
 
 ### Fixed

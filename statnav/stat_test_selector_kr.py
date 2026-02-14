@@ -42,7 +42,7 @@
 #  - 가정 검토(정규성: Shapiro + Q-Q(probplot), 등분산: Levene)
 #  - 효과크기 및 신뢰구간(가능한 경우 해석적/부트스트랩 안내)
 #
-# 버전: v1.2.0
+# 버전: v1.3.0
 # 마지막 점검: 2026-02-15  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
@@ -527,30 +527,49 @@ print("Power =", power)
         "정규성은 괜찮지만 분산이 같지 않을 때 3개 이상 독립 집단 평균을 비교합니다.",
         """import numpy as np
 from statsmodels.stats.oneway import anova_oneway
-from scipy import stats
+
+alpha = 0.05  # TODO
 
 # groups: list of arrays
 groups = [g1, g2, g3]  # TODO extend
+labels = ["g1", "g2", "g3"]  # TODO extend (groups와 순서 일치)
 
 res = anova_oneway(groups, use_var="unequal", welch_correction=True)
-print(res)
 
-# (참고) 효과크기: eta^2 / omega^2 (고전적 정의; 이분산에서도 보고용으로 자주 사용)
+# ── (1) 해석에 필요한 핵심만 요약 출력 ──
+F = float(res.statistic)
+p = float(res.pvalue)
+df1 = float(res.df_num)
+df2 = float(res.df_denom)
+
+print(f"[Welch ANOVA] F({df1:.0f}, {df2:.2f}) = {F:.3f}, p = {p:.4g}")
+
+if p < alpha:
+    print(f"→ p < {alpha}: 집단 평균에 차이가 있습니다. (사후검정: Games–Howell 권장)")
+else:
+    print(f"→ p ≥ {alpha}: 평균 차이에 대한 통계적 증거가 부족합니다.")
+
+# ── (2) 전체 효과크기(보고용): eta^2, omega^2 ──
 all_y = np.concatenate(groups)
 grand_mean = np.mean(all_y)
-ss_between = sum(len(g)*(np.mean(g)-grand_mean)**2 for g in groups)
-ss_within = sum(np.sum((g - np.mean(g))**2) for g in groups)
+
+ss_between = sum(len(g) * (np.mean(g) - grand_mean) ** 2 for g in groups)
+ss_within = sum(np.sum((g - np.mean(g)) ** 2) for g in groups)
 ss_total = ss_between + ss_within
-eta2 = ss_between/ss_total
 
-k=len(groups); n=len(all_y)
-df_between=k-1; df_within=n-k
-ms_within = ss_within/df_within
-omega2 = (ss_between - df_between*ms_within) / (ss_total + ms_within)
-print("eta^2 (reporting) =", eta2)
-print("omega^2 (reporting) =", omega2)
+k = len(groups)
+n = len(all_y)
+df_between = k - 1
+df_within = n - k
+ms_within = ss_within / df_within
 
-# 사후검정: Welch 유의 → Games-Howell 권장
+eta2 = ss_between / ss_total if ss_total > 0 else float("nan")
+omega2 = (ss_between - df_between * ms_within) / (ss_total + ms_within) if (ss_total + ms_within) > 0 else float("nan")
+
+print(f"[Effect size] eta^2 = {eta2:.4f}, omega^2 = {omega2:.4f}")
+print("  (경험칙) eta^2: 0.01=작음, 0.06=중간, 0.14=큼 (분야에 따라 달라질 수 있음)")
+
+# 사후검정은 별도 스니펫(posthoc_games_howell)에서 유의한 쌍만 추려 효과크기(hedges g)까지 출력합니다.
 """
     ),
 
@@ -561,34 +580,104 @@ print("omega^2 (reporting) =", omega2)
 import pandas as pd
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-# long-format data
+alpha = 0.05  # TODO
+
+# 1) long-format data
 df = pd.DataFrame({
     "y": np.concatenate([g1, g2, g3]),   # TODO extend
     "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
 })
 
-res = pairwise_tukeyhsd(endog=df["y"], groups=df["group"], alpha=0.05)
-print(res)
+# 2) Tukey HSD
+res = pairwise_tukeyhsd(endog=df["y"], groups=df["group"], alpha=alpha)
+
+# 3) 결과를 DataFrame으로 변환
+tbl = pd.DataFrame(res.summary().data[1:], columns=res.summary().data[0])
+# group1/group2/meandiff/p-adj/lower/upper/reject
+
+print("[Tukey HSD] 전체 결과")
+print(tbl.to_string(index=False))
+
+# 4) 유의한 쌍만 추리기
+sig = tbl[tbl["reject"] == True].copy()
+print("\n[Tukey HSD] 유의한 쌍 (reject=True)")
+if sig.empty:
+    print("(없음)")
+else:
+    print(sig.to_string(index=False))
+
+    # 5) 유의한 쌍에 대해 효과크기(Hedges' g) 계산
+    def hedges_g(a, b):
+        a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+        n1, n2 = len(a), len(b)
+        s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
+        sp = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
+        d = (np.mean(a) - np.mean(b)) / sp
+        J = 1 - 3 / (4*(n1+n2) - 9)  # small sample correction
+        return J * d
+
+    group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend labels/arrays
+
+    sig["hedges_g"] = sig.apply(lambda r: hedges_g(group_map[r["group1"]], group_map[r["group2"]]), axis=1)
+
+    # 보기 좋게 출력
+    out_cols = ["group1", "group2", "meandiff", "p-adj", "lower", "upper", "hedges_g"]
+    print("\n[Tukey HSD] 유의한 쌍 + 효과크기(Hedges' g)")
+    print(sig[out_cols].to_string(index=False))
+
+    print("\n(경험칙) |g|: 0.2=작음, 0.5=중간, 0.8=큼 (분야/측정에 따라 달라질 수 있음)")
 """
     ),
 
     "posthoc_games_howell": (
         "사후검정: Games–Howell(Welch ANOVA 이후)",
         "Welch ANOVA가 유의할 때(등분산 가정 없음) 사후검정으로 사용합니다.",
-        """# Common approach: use Pingouin's Games-Howell implementation.
+        """# Games–Howell (Welch ANOVA 이후 권장)
 # pip install pingouin
 
 import numpy as np
 import pandas as pd
 import pingouin as pg
 
+alpha = 0.05  # TODO
+
 df = pd.DataFrame({
     "y": np.concatenate([g1, g2, g3]),   # TODO extend
     "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
 })
 
-gh = pg.pairwise_gameshowell(dv='y', between='group', data=df)
-print(gh)
+gh = pg.pairwise_gameshowell(dv="y", between="group", data=df)
+
+print("[Games–Howell] 전체 결과")
+print(gh.to_string(index=False))
+
+# 유의한 쌍만 + 효과크기 출력
+sig = gh[gh["pval"] < alpha].copy()
+print("\n[Games–Howell] 유의한 쌍 (pval < alpha)")
+if sig.empty:
+    print("(없음)")
+else:
+    # pingouin은 보통 hedges 컬럼을 제공합니다(버전에 따라 다를 수 있음).
+    cols = ["A", "B", "diff", "pval"]
+    if "hedges" in sig.columns:
+        cols.append("hedges")
+        print(sig[cols].to_string(index=False))
+        print("\n(경험칙) |g|: 0.2=작음, 0.5=중간, 0.8=큼")
+    else:
+        # 만약 hedges 컬럼이 없다면, 데이터로부터 직접 계산
+        def hedges_g(a, b):
+            a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+            n1, n2 = len(a), len(b)
+            s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
+            sp = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
+            d = (np.mean(a) - np.mean(b)) / sp
+            J = 1 - 3 / (4*(n1+n2) - 9)
+            return J * d
+
+        group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
+        sig["hedges_g"] = sig.apply(lambda r: hedges_g(group_map[r["A"]], group_map[r["B"]]), axis=1)
+        print(sig[["A", "B", "diff", "pval", "hedges_g"]].to_string(index=False))
+        print("\n(경험칙) |g|: 0.2=작음, 0.5=중간, 0.8=큼")
 """
     ),
 
