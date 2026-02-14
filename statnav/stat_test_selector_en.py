@@ -6,7 +6,7 @@
 #  - Assumption checks (Normality: Shapiro + Q-Q(probplot), Equal variance: Levene)
 #  - Effect sizes and confidence intervals (analytic or bootstrap guidance where applicable)
 #
-# Version: 1.0 
+# Version: v1.1 
 # Last check: 2026-02-14  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
@@ -100,16 +100,6 @@ plt.show()
 
 stat, p = stats.levene(group1, group2)  # pass 3+ groups too
 print("Levene p =", p)
-"""
-    ),
-    "equal_var_Bartlett": (
-        "Equal variance check (Bartlett)",
-        "More powerful than Levene under normality, but sensitive to non-normality/outliers.",
-        """from scipy import stats
-
-# For 2+ groups
-stat, p = stats.Bartlett(group1, group2)  # pass 3+ groups too
-print("Bartlett p =", p)
 """
     ),
 }
@@ -1070,13 +1060,8 @@ def run_once() -> Dict[str, Any]:
                     return result
 
                 # Variance check (only meaningful if roughly normal)
-                use_Bartlett = ask_yes_no("Use Bartlett test for equal variances instead of Levene? (Bartlett assumes normality.)")
-                if use_Bartlett:
-                    show_assumption("equal_var_Bartlett")
-                    var_equal = ask_yes_no("Do variances look equal (Bartlett p >= alpha)?")
-                else:
-                    show_assumption("equal_var_levene")
-                    var_equal = ask_yes_no("Do variances look equal (Levene p >= alpha)?")
+                show_assumption("equal_var_levene")
+                var_equal = ask_yes_no("Do variances look equal (Levene p >= alpha)?")
 
                 if var_equal:
                     show_snippet("ind_t_student")

@@ -6,7 +6,7 @@
 #  - 가정 검토(정규성: Shapiro + Q-Q(probplot), 등분산: Levene)
 #  - 효과크기 및 신뢰구간(가능한 경우 해석적/부트스트랩 안내)
 #
-# 버전: 1.0
+# 버전: v1.1
 # 마지막 점검: 2026-02-14  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
@@ -98,16 +98,6 @@ plt.show()
 
 stat, p = stats.levene(group1, group2)  # pass 3개 이상 집단 too
 print("Levene p =", p)
-"""
-    ),
-    "equal_var_Bartlett": (
-        "등분산 검정(Bartlett)",
-        "정규성 하에서는 Levene보다 검정력이 높을 수 있으나, 비정규/이상치에 민감합니다.",
-        """from scipy import stats
-
-# For 2+ groups
-stat, p = stats.Bartlett(group1, group2)  # pass 3개 이상 집단 too
-print("Bartlett p =", p)
 """
     ),
 }
@@ -1037,13 +1027,8 @@ def run_once() -> Dict[str, Any]:
                     result["final_tests"] = ["mann_whitney"]
                     return result
 
-                use_Bartlett = ask_yes_no("등분산성 가정이 성립하나요? (Levene 검정) (Bartlett는 정규성 가정)")
-                if use_Bartlett:
-                    show_assumption("equal_var_Bartlett")
-                    var_equal = ask_yes_no("분산이 같아 보이나요? (Bartlett p ≥ α)")
-                else:
-                    show_assumption("equal_var_levene")
-                    var_equal = ask_yes_no("분산이 같아 보이나요? (Levene p ≥ α)")
+                show_assumption("equal_var_levene")
+                var_equal = ask_yes_no("분산이 같아 보이나요? (Levene p ≥ α)")
 
                 if var_equal:
                     show_snippet("ind_t_student")
