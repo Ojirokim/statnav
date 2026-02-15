@@ -9,6 +9,52 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.1] - 2026-02-15
+
+### Fixed
+
+### Snippet Copy-Paste Stability
+
+- Resolved string literal breakage caused by embedded `\n` inside triple-quoted snippet templates.
+- Replaced vulnerable patterns such as:
+  - `print("\n...")`
+- Standardized header formatting to:
+  - `print()`
+  - `print("...")`
+- Eliminated potential `SyntaxError: unterminated string literal` when copying snippets directly into external scripts.
+
+---
+
+### Post-Hoc Consistency Adjustments
+
+- Standardized Tukey HSD post-hoc effect size reporting to **Cohen’s d**.
+- Ensured Games–Howell post-hoc reporting consistently uses **Hedges’ g**.
+- Harmonized effect size column labels and printed output for clarity and consistency.
+
+---
+
+### Execution Safety Validation
+
+- Performed full in-memory compilation check of all snippet templates.
+- Verified successful execution under `--smoketest` mode.
+- Confirmed:
+  - No syntax errors
+  - No argparse conflicts
+  - No runtime exceptions
+  - No snippet compilation failures
+- Validated compatibility with current SciPy and statsmodels environments.
+
+---
+
+### Stability Status
+
+- All 36 snippet templates compile without syntax errors.
+- CLI argument handling verified.
+- No interactive execution crashes detected.
+- System validated as Release Candidate–ready.
+
+---
+
 ## [1.3.0] - 2026-02-15
 
 ### Refactored

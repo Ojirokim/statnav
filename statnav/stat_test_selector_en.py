@@ -42,7 +42,7 @@
 #  - Assumption checks (Normality: Shapiro + Q-Q(probplot), Equal variance: Levene)
 #  - Effect sizes and confidence intervals (analytic or bootstrap guidance where applicable)
 #
-# Version: v1.3.0 
+# Version: v1.3.1
 # Last check: 2026-02-15  |  smoketest: PASS
 # Developed by: 김규열(Ojirokim)
 # License: MIT
@@ -65,6 +65,11 @@ Notes:
 from typing import Optional, List, Tuple, Dict, Any
 
 CURRENT_ALT: Optional[str] = None  # "two-sided" | "greater" | "less"
+
+# Common snippet settings (to avoid repeating in every snippet)
+COMMON_SETTINGS = """alpha = 0.05  # TODO
+alternative = \"two-sided\"  # \"two-sided\" | \"greater\" | \"less\"
+"""
 
 
 import argparse
@@ -120,6 +125,7 @@ def print_node(title: str, detail: Optional[str] = None, code: Optional[str] = N
         print("Code snippet (copy-friendly):")
         print("# ---BEGIN SNIPPET---")
         safe_code = code.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ").rstrip("\n")
+        safe_code = safe_code.replace("__COMMON_SETTINGS__", COMMON_SETTINGS)
         sys.stdout.write(safe_code + "\n")
         print("# ---END SNIPPET---")
     print("=" * 72)
@@ -168,45 +174,45 @@ TEST_SNIPPETS = {
     "onesample_t": (
         "One-sample t-test",
         "Compare one sample mean to a constant value.",
-        """from scipy import stats
+        """
+from scipy import stats
 import numpy as np
 
-# x : sample array
+__COMMON_SETTINGS__
+
+# x : 1D sample array
 mu0 = 0  # TODO: hypothesized mean under H0
 
-t_stat, p_value = stats.ttest_1samp(x, popmean=mu0, alternative="two-sided")  # or "less"/"greater"
-print("t =", t_stat, "p =", p_value)
+t_stat, p_value = stats.ttest_1samp(x, popmean=mu0, alternative=alternative)
 
-# Effect size: Cohen's d
-d = (np.mean(x) - mu0) / np.std(x, ddof=1)
-print("Cohen's d =", d)
+xbar = float(np.mean(x))
+sd = float(np.std(x, ddof=1))
+d = (xbar - mu0) / sd if sd > 0 else np.nan
 
-# Power
-from statsmodels.stats.power import TTestPower
-power = TTestPower().power(effect_size=d, nobs=len(x), alpha=0.05, alternative="two-sided")  # TODO alpha/alternative
-print("Power =", power)
+print("[One-sample t-test]")
+print(f"  H0: mean = {mu0} | alternative = {alternative}")
+print(f"  mean = {xbar:.4f}, t = {t_stat:.4f}, p = {p_value:.4g}, alpha = {alpha}")
+print(f"  Effect size (Cohen's d) = {d:.4f}  (|d|: 0.2 small, 0.5 medium, 0.8 large; context-dependent)")
 
-# CI for mean and (mean - mu0)
-alpha = 0.05  # TODO
+if p_value < alpha:
+    print("  → Reject H0: evidence that the mean differs from mu0.")
+else:
+    print("  → Fail to reject H0: insufficient evidence that the mean differs from mu0.")
+
+# CI for mean difference (mean - mu0)
 n = len(x); df = n - 1
 se = stats.sem(x)
-xbar = np.mean(x)
-
-tcrit_two = stats.t.ppf(1 - alpha/2, df)
-tcrit_one = stats.t.ppf(1 - alpha, df)
-
 if alternative == "two-sided":
-    ci_mean = (xbar - tcrit_two*se, xbar + tcrit_two*se)
-    ci_diff = ((xbar-mu0) - tcrit_two*se, (xbar-mu0) + tcrit_two*se)
+    tcrit = stats.t.ppf(1 - alpha/2, df)
+    ci = ((xbar - mu0) - tcrit*se, (xbar - mu0) + tcrit*se)
 elif alternative == "greater":
-    ci_mean = (xbar - tcrit_one*se, np.inf)
-    ci_diff = ((xbar-mu0) - tcrit_one*se, np.inf)
+    tcrit = stats.t.ppf(1 - alpha, df)
+    ci = ((xbar - mu0) - tcrit*se, np.inf)
 else:  # "less"
-    ci_mean = (-np.inf, xbar + tcrit_one*se)
-    ci_diff = (-np.inf, (xbar-mu0) + tcrit_one*se)
+    tcrit = stats.t.ppf(1 - alpha, df)
+    ci = (-np.inf, (xbar - mu0) + tcrit*se)
+print(f"  {int((1-alpha)*100)}% CI for (mean - mu0) = {ci}")
 
-print(f"{int((1-alpha)*100)}% CI mean =", ci_mean)
-print(f"{int((1-alpha)*100)}% CI (mean-mu0) =", ci_diff)
 """
     ),
     # Wilcoxon one-sample (vs constant)
@@ -261,40 +267,44 @@ else:
     "paired_t": (
         "Paired t-test",
         "Same subjects measured twice (before/after).",
-        """from scipy import stats
+        """
+from scipy import stats
 import numpy as np
 
-# x_before, x_after : paired arrays
-t_stat, p_value = stats.ttest_rel(x_before, x_after, alternative="two-sided")  # or "less"/"greater"
-print("t =", t_stat, "p =", p_value)
+__COMMON_SETTINGS__
 
-# Effect size: Cohen's d (paired)
-diff = x_before - x_after
-d = np.mean(diff) / np.std(diff, ddof=1)
-print("Cohen's d (paired) =", d)
+# x_before, x_after : paired arrays (same length)
+t_stat, p_value = stats.ttest_rel(x_before, x_after, alternative=alternative)
 
-# Power
-from statsmodels.stats.power import TTestPower
-power = TTestPower().power(effect_size=d, nobs=len(diff), alpha=0.05)  # TODO alpha/alternative
-print("Power =", power)
+diff = np.asarray(x_before) - np.asarray(x_after)
+est = float(np.mean(diff))
+sd = float(np.std(diff, ddof=1))
+d = est / sd if sd > 0 else np.nan
 
-# CI for paired mean difference
-alpha = 0.05  # TODO
+print("[Paired t-test]")
+print(f"  H0: mean(diff)=0 | alternative = {alternative}")
+print(f"  mean(diff) = {est:.4f}, t = {t_stat:.4f}, p = {p_value:.4g}, alpha = {alpha}")
+print(f"  Effect size (Cohen's d_paired) = {d:.4f}  (|d|: 0.2 small, 0.5 medium, 0.8 large; context-dependent)")
+
+if p_value < alpha:
+    print("  → Reject H0: evidence of a mean change between paired measurements.")
+else:
+    print("  → Fail to reject H0: insufficient evidence of a mean change.")
+
+# CI for mean(diff)
 n = len(diff); df = n - 1
 se = stats.sem(diff)
-est = np.mean(diff)
-
-tcrit_two = stats.t.ppf(1 - alpha/2, df)
-tcrit_one = stats.t.ppf(1 - alpha, df)
-
 if alternative == "two-sided":
-    ci = (est - tcrit_two*se, est + tcrit_two*se)
+    tcrit = stats.t.ppf(1 - alpha/2, df)
+    ci = (est - tcrit*se, est + tcrit*se)
 elif alternative == "greater":
-    ci = (est - tcrit_one*se, np.inf)
-else:  # "less"
-    ci = (-np.inf, est + tcrit_one*se)
+    tcrit = stats.t.ppf(1 - alpha, df)
+    ci = (est - tcrit*se, np.inf)
+else:
+    tcrit = stats.t.ppf(1 - alpha, df)
+    ci = (-np.inf, est + tcrit*se)
+print(f"  {int((1-alpha)*100)}% CI for mean(diff) = {ci}")
 
-print(f"{int((1-alpha)*100)}% CI mean(diff) =", ci)
 """
     ),
     "wilcoxon_paired": (
@@ -303,42 +313,54 @@ print(f"{int((1-alpha)*100)}% CI mean(diff) =", ci)
         """from scipy import stats
 import numpy as np
 
+__COMMON_SETTINGS__
+
 # x_before, x_after : paired arrays
 diff = x_before - x_after
-w_stat, p_value = stats.wilcoxon(diff, alternative="two-sided")
-print("W =", w_stat, "p =", p_value)
 
-# Effect size: Rank-biserial correlation (RBC)
+stat, p_value = stats.wilcoxon(diff, alternative=alternative)
+print(f"[Wilcoxon (paired)] W = {stat:.4g}, p = {p_value:.4g}, alpha = {alpha}")
+
+if p_value < alpha:
+    print("→ Decision: reject H0 (evidence of a non-zero median difference)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
+
+# ── Effect size: Rank-biserial correlation (RBC) ──
 diff_nz = diff[diff != 0]
 if len(diff_nz) == 0:
-    print("All differences are zero; effect size is undefined.")
+    print("[Effect size] All differences are zero → undefined")
 else:
     ranks = stats.rankdata(np.abs(diff_nz))
     w_pos = ranks[diff_nz > 0].sum()
     w_neg = ranks[diff_nz < 0].sum()
     rbc = (w_pos - w_neg) / (w_pos + w_neg)
-    print("Rank-biserial correlation (RBC) =", rbc)
+    print(f"[Effect size] RBC = {rbc:.4f}  (rule of thumb: 0.1 small, 0.3 medium, 0.5 large; context-dependent)")
 
-    # Bootstrap CI for RBC
-    alpha = 0.05
-    B = 2000
+    # ── Bootstrap CI ──
     rng = np.random.default_rng(0)
-    boot = []
+    B = 2000
+    vals = []
     for _ in range(B):
         d_b = rng.choice(diff, size=len(diff), replace=True)
-        d_b = d_b[d_b != 0]
-        if len(d_b) < 2:
+        d2 = d_b[d_b != 0]
+        if len(d2) < 2:
             continue
-        r_b = stats.rankdata(np.abs(d_b))
-        w_pos_b = r_b[d_b > 0].sum()
-        w_neg_b = r_b[d_b < 0].sum()
-        boot.append((w_pos_b - w_neg_b) / (w_pos_b + w_neg_b))
-    boot = np.sort(np.array(boot))
-    ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-    print(f"{int((1-alpha)*100)}% bootstrap CI for RBC =", ci)
-
-# Power note: typically via simulation.
-"""
+        r2 = stats.rankdata(np.abs(d2))
+        w_pos2 = r2[d2 > 0].sum()
+        w_neg2 = r2[d2 < 0].sum()
+        vals.append((w_pos2 - w_neg2) / (w_pos2 + w_neg2))
+    vals = np.array(vals)
+    if len(vals) > 10:
+        if alternative == "two-sided":
+            ci = (np.quantile(vals, 0.025), np.quantile(vals, 0.975))
+        elif alternative == "greater":
+            ci = (np.quantile(vals, 0.05), np.inf)
+        else:
+            ci = (-np.inf, np.quantile(vals, 0.95))
+        print(f"[CI] 95% bootstrap CI for RBC = {ci}")
+    else:
+        print("[CI] Too few bootstrap samples; CI skipped")"""
     ),
 
     # Independent t: Student & Welch
@@ -429,21 +451,19 @@ print(f"{int((1-alpha)*100)}% CI mean difference (Welch) =", ci)
     "mann_whitney": (
         "Mann–Whitney U test",
         "Nonparametric alternative to independent t-test (rank-sum).",
-        """from scipy import stats
+        """
+from scipy import stats
 import numpy as np
 
-# a, b : independent samples
-u_stat, p_value = stats.mannwhitneyu(a, b, alternative="two-sided")
-print("U =", u_stat, "p =", p_value)
+__COMMON_SETTINGS__
 
+# a, b : independent samples
+u_stat, p_value = stats.mannwhitneyu(a, b, alternative=alternative)
 n1, n2 = len(a), len(b)
 
-# Effect size 1: Rank-biserial correlation (RBC)
+# Effect size: rank-biserial correlation (RBC) and Cliff's delta
 rbc = 1 - (2 * u_stat) / (n1 * n2)
-print("Rank-biserial correlation (RBC) =", rbc)
 
-# Effect size 2: Cliff's delta (equivalent to RBC under standard definitions)
-# delta = P(a > b) - P(a < b)
 def cliffs_delta(x, y):
     x = np.asarray(x); y = np.asarray(y)
     gt = sum((xi > y).sum() for xi in x)
@@ -451,24 +471,29 @@ def cliffs_delta(x, y):
     return (gt - lt) / (len(x) * len(y))
 
 delta = cliffs_delta(a, b)
-print("Cliff's delta =", delta)
 
-# Bootstrap CI for RBC (or delta)
-alpha = 0.05
-B = 2000
+print("[Mann–Whitney U test]")
+print(f"  U = {u_stat:.4f}, p = {p_value:.4g}, alpha = {alpha} | alternative = {alternative}")
+print(f"  Effect size: RBC = {rbc:.4f} | Cliff's delta = {delta:.4f}  (context-dependent thresholds)")
+
+if p_value < alpha:
+    print("  → Reject H0: evidence of a distribution shift between groups.")
+else:
+    print("  → Fail to reject H0: insufficient evidence of a distribution shift.")
+
+# Bootstrap CI for RBC (recommended)
+B = 2000  # TODO
 rng = np.random.default_rng(0)
+a = np.asarray(a); b = np.asarray(b)
 boot = []
 for _ in range(B):
-    a_b = rng.choice(a, size=n1, replace=True)
-    b_b = rng.choice(b, size=n2, replace=True)
-    u_b, _ = stats.mannwhitneyu(a_b, b_b, alternative="two-sided")
-    rbc_b = 1 - (2 * u_b) / (n1 * n2)
-    boot.append(rbc_b)
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for RBC =", ci)
+    aa = rng.choice(a, size=n1, replace=True)
+    bb = rng.choice(b, size=n2, replace=True)
+    u_b, _ = stats.mannwhitneyu(aa, bb, alternative=alternative)
+    boot.append(1 - (2*u_b)/(n1*n2))
+ci = (np.percentile(boot, 2.5), np.percentile(boot, 97.5))
+print(f"  95% bootstrap CI for RBC = [{ci[0]:.4f}, {ci[1]:.4f}]")
 
-# Power note: typically via simulation for Mann–Whitney.
 """
     ),
 
@@ -479,39 +504,39 @@ print(f"{int((1-alpha)*100)}% bootstrap CI for RBC =", ci)
         """from scipy import stats
 import numpy as np
 
+alpha = 0.05  # TODO
+
 # g1, g2, g3 : group arrays (extend as needed)
 f_stat, p_value = stats.f_oneway(g1, g2, g3)
-print("F =", f_stat, "p =", p_value)
+print(f"[One-way ANOVA] F = {f_stat:.4g}, p = {p_value:.4g}, alpha = {alpha}")
+
+if p_value < alpha:
+    print("→ Decision: reject H0 (evidence of mean differences across groups)")
+    print("→ Next step (post-hoc):")
+    print("   - If variances are ~equal: Tukey HSD")
+    print("   - If variances are unequal: Welch ANOVA + Games–Howell")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence of mean differences)")
 
 groups = [g1, g2, g3]  # TODO extend
-y = np.concatenate(groups)
-grand_mean = np.mean(y)
+all_y = np.concatenate(groups)
+grand_mean = np.mean(all_y)
 
-# Sums of squares
 ss_between = sum(len(g)*(np.mean(g)-grand_mean)**2 for g in groups)
-ss_within = sum(((g - np.mean(g))**2).sum() for g in groups)
+ss_within = sum(np.sum((g - np.mean(g))**2) for g in groups)
 ss_total = ss_between + ss_within
 
-# Effect sizes
-eta2 = ss_between / ss_total
+eta2 = ss_between / ss_total if ss_total > 0 else np.nan
 k = len(groups)
-n = len(y)
-ms_within = ss_within / (n - k)
-omega2 = (ss_between - (k - 1)*ms_within) / (ss_total + ms_within)
-omega2 = max(0.0, omega2)
+n = len(all_y)
+df_between = k - 1
+df_within = n - k
+ms_within = ss_within / df_within
+omega2 = (ss_between - df_between*ms_within) / (ss_total + ms_within) if (ss_total + ms_within) > 0 else np.nan
+cohens_f = np.sqrt(eta2 / (1 - eta2)) if (eta2 is not np.nan and eta2 < 1) else np.nan
 
-cohens_f = np.sqrt(eta2 / (1 - eta2))
-print("eta^2 =", eta2, "omega^2 =", omega2, "Cohen's f =", cohens_f)
-
-# Power
-from statsmodels.stats.power import FTestAnovaPower
-power = FTestAnovaPower().power(effect_size=cohens_f, k_groups=k, nobs=n, alpha=0.05)
-print("Power =", power)
-
-# CI note:
-# - CIs for eta^2/omega^2 often via bootstrap.
-# - Pairwise mean-difference CIs come from post-hoc procedures (Tukey, Games–Howell).
-"""
+print(f"[Effect size] eta^2 = {eta2:.4f}, omega^2 = {omega2:.4f}, Cohen's f = {cohens_f:.4f}")
+print("  (rule of thumb) eta^2: 0.01 small, 0.06 medium, 0.14 large (context-dependent)")"""
     ),
 
     "welch_anova": (
@@ -561,7 +586,7 @@ omega2 = (ss_between - df_between * ms_within) / (ss_total + ms_within) if (ss_t
 print(f"[Effect size] eta^2 = {eta2:.4f}, omega^2 = {omega2:.4f}")
 print("  (rules of thumb) eta^2: 0.01 small, 0.06 medium, 0.14 large (context-dependent)")
 
-# For pairwise effect sizes (significant pairs only), see the Games–Howell post-hoc snippet.
+# For pairwise comparisons, use the Games–Howell post-hoc snippet below (ALL pairs: adjusted p-values + effect sizes + CI comments).
 """
     ),
 
@@ -574,10 +599,14 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 alpha = 0.05  # TODO
 
+# TODO INPUT:
+# - g1, g2, g3: 1D numeric arrays (extend for more groups)
+# - Replace labels 'g1','g2','g3' with your actual group names if desired.
+
 # 1) long-format data
 df = pd.DataFrame({
     "y": np.concatenate([g1, g2, g3]),   # TODO extend
-    "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
+    "group": (["g1"]*len(g1) + ["g2"]*len(g2) + ["g3"]*len(g3))
 })
 
 # 2) Tukey HSD
@@ -587,106 +616,251 @@ res = pairwise_tukeyhsd(endog=df["y"], groups=df["group"], alpha=alpha)
 tbl = pd.DataFrame(res.summary().data[1:], columns=res.summary().data[0])
 # columns: group1 group2 meandiff p-adj lower upper reject
 
-print("[Tukey HSD] full table")
+# ---- Effect size helpers ----
+def _pooled_sd(a, b):
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    n1, n2 = len(a), len(b)
+    s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
+    return np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
+
+def cohens_d(a, b):
+    sp = _pooled_sd(a, b)
+    return (np.mean(a) - np.mean(b)) / sp if sp > 0 else np.nan
+
+def hedges_g(a, b):
+    # Why Hedges' g for small samples?
+    # - Cohen's d is slightly biased upward when sample sizes are small.
+    # - Hedges' g applies a correction factor (J) to reduce this bias.
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    n1, n2 = len(a), len(b)
+    d = cohens_d(a, b)
+    J = 1 - 3 / (4*(n1+n2) - 9)
+    return J * d
+
+def auto_effect(a, b, small_n=20):
+    # Auto: use Hedges' g if either group is "small" (default threshold: 20)
+    if len(a) < small_n or len(b) < small_n:
+        return hedges_g(a, b), "Hedges' g (small-sample correction)"
+    return cohens_d(a, b), "Cohen's d"
+
+def ci_comment(lower, upper):
+    lower = float(lower); upper = float(upper)
+    if lower > 0 or upper < 0:
+        return "CI excludes 0 → difference is statistically reliable"
+    return "CI includes 0 → difference may be statistically uncertain"
+
+group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
+
+effects = []
+effect_types = []
+comments = []
+
+for _, r in tbl.iterrows():
+    a = group_map[r["group1"]]
+    b = group_map[r["group2"]]
+    es, es_type = auto_effect(a, b)
+    effects.append(es)
+    effect_types.append(es_type)
+    comments.append(ci_comment(r["lower"], r["upper"]))
+
+tbl["effect_size"] = effects
+tbl["effect_type"] = effect_types
+tbl["CI_comment"] = comments
+
+print("[Tukey HSD] full table + effect size (all pairs)")
 print(tbl.to_string(index=False))
 
-# 4) Significant pairs only
-sig = tbl[tbl["reject"] == True].copy()
-print("\n[Tukey HSD] significant pairs (reject=True)")
-if sig.empty:
-    print("(none)")
-else:
-    print(sig.to_string(index=False))
-
-    # 5) Effect size (Hedges' g) for significant pairs
-    def hedges_g(a, b):
-        a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
-        n1, n2 = len(a), len(b)
-        s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
-        sp = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
-        d = (np.mean(a) - np.mean(b)) / sp
-        J = 1 - 3 / (4*(n1+n2) - 9)
-        return J * d
-
-    group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
-
-    sig["hedges_g"] = sig.apply(lambda r: hedges_g(group_map[r["group1"]], group_map[r["group2"]]), axis=1)
-
-    out_cols = ["group1", "group2", "meandiff", "p-adj", "lower", "upper", "hedges_g"]
-    print("\n[Tukey HSD] significant pairs + effect size (Hedges' g)")
-    print(sig[out_cols].to_string(index=False))
-
-    print("\n(rule of thumb) |g|: 0.2 small, 0.5 medium, 0.8 large (context-dependent)")
+print()
+print("(rule of thumb) |d| or |g|: 0.2 small, 0.5 medium, 0.8 large (context-dependent)")
 """
     ),
 
     "posthoc_games_howell": (
         "post-hoc: Games–Howell (after Welch's ANOVA)",
         "Use after a significant Welch's ANOVA (no equal-variance assumption).",
-        """# Games–Howell (recommended after Welch ANOVA)
-# pip install pingouin
-
-import numpy as np
+        """import numpy as np
 import pandas as pd
 import pingouin as pg
+from scipy import stats
 
 alpha = 0.05  # TODO
 
+# TODO INPUT:
+# - g1, g2, g3 ... : 1D numeric arrays (extend for more groups)
+# - labels must match the keys in group_map
+
+# 1) long-format data
 df = pd.DataFrame({
     "y": np.concatenate([g1, g2, g3]),   # TODO extend
-    "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
+    "group": (["g1"]*len(g1) + ["g2"]*len(g2) + ["g3"]*len(g3))
 })
 
-gh = pg.pairwise_gameshowell(dv="y", between="group", data=df)
+# 2) Games–Howell post-hoc
+gh = pg.pairwise_gameshowell(data=df, dv="y", between="group")
 
-print("[Games–Howell] full table")
+# ---- Effect size helpers (auto Hedges' g for small samples) ----
+def _pooled_sd(a, b):
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    n1, n2 = len(a), len(b)
+    s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
+    return np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
+
+def cohens_d(a, b):
+    sp = _pooled_sd(a, b)
+    return (np.mean(a) - np.mean(b)) / sp if sp > 0 else np.nan
+
+def hedges_g(a, b):
+    # Why Hedges' g for small samples?
+    # - Cohen's d is slightly biased upward when sample sizes are small.
+    # - Hedges' g applies a correction factor (J) to reduce this bias.
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    n1, n2 = len(a), len(b)
+    d = cohens_d(a, b)
+    J = 1 - 3 / (4*(n1+n2) - 9)
+    return J * d
+
+def auto_effect(a, b, small_n=20):
+    if len(a) < small_n or len(b) < small_n:
+        return hedges_g(a, b), "Hedges' g (small-sample correction)"
+    return cohens_d(a, b), "Cohen's d"
+
+def ci_comment(lower, upper):
+    if lower > 0 or upper < 0:
+        return "CI excludes 0 → difference is statistically reliable"
+    return "CI includes 0 → difference may be statistically uncertain"
+
+group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
+
+# 3) Add CI (computed) + effect size to ALL pairs
+# pingouin typically returns: A, B, diff, se, df, pval, hedges (may vary by version)
+ci_low = []
+ci_high = []
+effects = []
+effect_types = []
+comments = []
+
+for _, r in gh.iterrows():
+    diff = float(r["diff"])
+    se = float(r["se"])
+    df_ = float(r["df"])
+    tcrit = stats.t.ppf(1 - alpha/2, df_)
+    lo = diff - tcrit*se
+    hi = diff + tcrit*se
+    ci_low.append(lo)
+    ci_high.append(hi)
+
+    a = group_map[r["A"]]
+    b = group_map[r["B"]]
+    es, es_type = auto_effect(a, b)
+    effects.append(es)
+    effect_types.append(es_type)
+    comments.append(ci_comment(lo, hi))
+
+gh["ci_low"] = ci_low
+gh["ci_high"] = ci_high
+gh["effect_size"] = effects
+gh["effect_type"] = effect_types
+gh["CI_comment"] = comments
+
+print("[Games–Howell] full table + effect size (all pairs)")
 print(gh.to_string(index=False))
 
-sig = gh[gh["pval"] < alpha].copy()
-print("\n[Games–Howell] significant pairs (pval < alpha)")
-if sig.empty:
-    print("(none)")
-else:
-    cols = ["A", "B", "diff", "pval"]
-    if "hedges" in sig.columns:
-        cols.append("hedges")
-        print(sig[cols].to_string(index=False))
-        print("\n(rule of thumb) |g|: 0.2 small, 0.5 medium, 0.8 large")
-    else:
-        def hedges_g(a, b):
-            a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
-            n1, n2 = len(a), len(b)
-            s1, s2 = np.var(a, ddof=1), np.var(b, ddof=1)
-            sp = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1 + n2 - 2))
-            d = (np.mean(a) - np.mean(b)) / sp
-            J = 1 - 3 / (4*(n1+n2) - 9)
-            return J * d
-
-        group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
-        sig["hedges_g"] = sig.apply(lambda r: hedges_g(group_map[r["A"]], group_map[r["B"]]), axis=1)
-        print(sig[["A", "B", "diff", "pval", "hedges_g"]].to_string(index=False))
-        print("\n(rule of thumb) |g|: 0.2 small, 0.5 medium, 0.8 large")
+print()
+print("(rule of thumb) |d| or |g|: 0.2 small, 0.5 medium, 0.8 large (context-dependent)")
 """
     ),
 
     "posthoc_dunn": (
         "post-hoc: Dunn's test (after Kruskal–Wallis)",
         "Use after a significant Kruskal–Wallis; adjusts for multiple comparisons.",
-        """# Common approach: use scikit-posthocs Dunn test.
-# pip install scikit-posthocs
+        """
+# Dunn's test after Kruskal–Wallis (all pairs, adjusted p-values)
+# Requires: scikit-posthocs
+#   pip install scikit-posthocs
 
 import numpy as np
 import pandas as pd
-import scikit_posthocs as sp
 
+try:
+    import scikit_posthocs as sp
+except ImportError as e:
+    raise ImportError(
+        "scikit-posthocs is required for Dunn's test. Install via: pip install scikit-posthocs"
+    ) from e
+
+alpha = 0.05  # TODO
+p_adjust = "holm"  # alternatives: "bonferroni", "fdr_bh", ...
+
+# TODO INPUT:
+# - g1, g2, g3 ... : 1D numeric arrays (extend for more groups)
+# - Update group_map to match your group names
+group_map = {"g1": g1, "g2": g2, "g3": g3}  # TODO extend
+
+# 1) Long-format data
 df = pd.DataFrame({
-    "y": np.concatenate([g1, g2, g3]),   # TODO extend
-    "group": (['g1']*len(g1) + ['g2']*len(g2) + ['g3']*len(g3))
+    "y": np.concatenate(list(group_map.values())),
+    "group": np.concatenate([[k]*len(v) for k, v in group_map.items()])
 })
 
-# Holm adjustment is a solid default; alternatives: 'bonferroni', 'fdr_bh', etc.
-pvals = sp.posthoc_dunn(df, val_col='y', group_col='group', p_adjust='holm')
-print(pvals)
+# 2) Dunn test (pairwise, adjusted p-values matrix)
+p_mat = sp.posthoc_dunn(df, val_col="y", group_col="group", p_adjust=p_adjust)
+
+# 3) Convert matrix -> long table (ALL pairs)
+pairs = []
+groups = list(p_mat.index)
+for i in range(len(groups)):
+    for j in range(i+1, len(groups)):
+        a = groups[i]; b = groups[j]
+        pairs.append({"group1": a, "group2": b, "p_adj": float(p_mat.loc[a, b])})
+tbl = pd.DataFrame(pairs)
+
+# ---- Effect size: Cliff's delta (+ bootstrap CI) ----
+# Cliff's delta = P(X>Y) - P(X<Y), ranges [-1, 1]; 0 means no stochastic dominance.
+# (This is appropriate for nonparametric comparisons and does not assume normality.)
+def cliffs_delta(x, y):
+    x = np.asarray(x); y = np.asarray(y)
+    gt = sum((xi > y).sum() for xi in x)
+    lt = sum((xi < y).sum() for xi in x)
+    return (gt - lt) / (len(x) * len(y))
+
+def bootstrap_ci_delta(x, y, B=2000, alpha=0.05, seed=0):
+    rng = np.random.default_rng(seed)
+    x = np.asarray(x); y = np.asarray(y)
+    n1, n2 = len(x), len(y)
+    vals = []
+    for _ in range(B):
+        xb = rng.choice(x, size=n1, replace=True)
+        yb = rng.choice(y, size=n2, replace=True)
+        vals.append(cliffs_delta(xb, yb))
+    lo = float(np.quantile(vals, alpha/2))
+    hi = float(np.quantile(vals, 1 - alpha/2))
+    return lo, hi
+
+effects = []
+ci_lows = []
+ci_highs = []
+comments = []
+
+for _, r in tbl.iterrows():
+    a, b = r["group1"], r["group2"]
+    x, y = group_map[a], group_map[b]
+    dlt = float(cliffs_delta(x, y))
+    lo, hi = bootstrap_ci_delta(x, y, B=2000, alpha=0.05, seed=0)
+    effects.append(dlt); ci_lows.append(lo); ci_highs.append(hi)
+    comments.append("CI does NOT include 0" if (lo > 0 or hi < 0) else "CI includes 0")
+
+tbl["cliffs_delta"] = effects
+tbl["delta_ci_low"] = ci_lows
+tbl["delta_ci_high"] = ci_highs
+tbl["CI_comment"] = comments
+tbl["reject"] = tbl["p_adj"] < alpha
+
+# 4) Print unified output
+print(f"[Dunn] All pairs (p_adjust={p_adjust}, alpha={alpha})")
+print(tbl.sort_values(["p_adj", "group1", "group2"]).to_string(index=False))
+
+print()
+print("(effect size) Cliff's delta: 0=no difference; magnitude is context-dependent.")
 """
     ),
     "kruskal": (
@@ -695,83 +869,92 @@ print(pvals)
         """from scipy import stats
 import numpy as np
 
-h_stat, p_value = stats.kruskal(g1, g2, g3)  # extend as needed
-print("H =", h_stat, "p =", p_value)
+alpha = 0.05  # TODO
 
-# Effect size: epsilon-squared (recommended over eta2_H)
-k = 3  # TODO number of groups
-n_total = len(g1) + len(g2) + len(g3)  # TODO extend
-eps2 = (h_stat - k + 1) / (n_total - k)
-print("Epsilon-squared =", eps2)
+# groups: list of arrays
+groups = [g1, g2, g3]  # TODO extend
+labels = ["g1", "g2", "g3"]  # TODO extend (keep same order as groups)
 
-# Bootstrap CI for epsilon-squared
-alpha = 0.05
-B = 2000
+h_stat, p_value = stats.kruskal(*groups)
+
+print("[Kruskal–Wallis]")
+print(f"  H = {h_stat:.4f}, p = {p_value:.4g}, alpha = {alpha}")
+
+if p_value < alpha:
+    print("  → Reject H0: evidence that at least one group differs (in distribution/central tendency).")
+    print("  → Post-hoc: use Dunn's test with multiple-comparison adjustment for ALL pairs.")
+else:
+    print("  → Fail to reject H0: insufficient evidence of group differences.")
+    print("  (Note) With small samples, power may be low—inspect effect size/CI too.")
+
+# Effect size: epsilon-squared (Kruskal–Wallis)
+n = sum(len(g) for g in groups)
+k = len(groups)
+epsilon2 = (h_stat - k + 1) / (n - k) if (n - k) > 0 else np.nan
+print(f"  Effect size epsilon^2 = {epsilon2:.4f}")
+print("    (rule of thumb) ε²≈0.01 small, 0.08 medium, 0.26 large (context-dependent)")
+
+# Bootstrap CI for epsilon^2
 rng = np.random.default_rng(0)
-groups = [np.asarray(g1), np.asarray(g2), np.asarray(g3)]
-ns = [len(g) for g in groups]
-boot = []
+B = 2000  # TODO
+vals = []
 for _ in range(B):
-    boot_groups = [rng.choice(g, size=n, replace=True) for g, n in zip(groups, ns)]
+    boot_groups = [rng.choice(g, size=len(g), replace=True) for g in groups]
     h_b, _ = stats.kruskal(*boot_groups)
-    eps2_b = (h_b - k + 1) / (sum(ns) - k)
-    boot.append(eps2_b)
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for epsilon^2 =", ci)
+    eps_b = (h_b - k + 1) / (n - k) if (n - k) > 0 else np.nan
+    vals.append(eps_b)
 
-# Power note: typically via simulation for Kruskal–Wallis.
-"""
+ci = (float(np.quantile(vals, 0.025)), float(np.quantile(vals, 0.975)))
+print(f"  95% CI for epsilon^2 (bootstrap) = {ci}")
+print("  CI tip: values near 0 suggest a small difference (context-dependent).")"""
     ),
 
     # Binary/categorical
     "chi2_contingency": (
         "Chi-square test of independence",
         "Association between categorical variables (contingency table, RxC).",
-        """
-import numpy as np
+        """import numpy as np
+import pandas as pd
 from scipy import stats
+
+alpha = 0.05  # TODO
 
 # table : contingency table (observed counts) array (R×C)
 # TODO INPUT:
 # table = np.array([[...], [...], ...], dtype=int)
 
-table_np: np.ndarray = np.asarray(table, dtype=float)
-res = stats.chi2_contingency(table_np, correction=False)
+table_np = np.asarray(table, dtype=float)
 
-chi2: float = float(res.statistic)
-p: float = float(res.pvalue)
-dof: int = int(res.dof)
-expected: np.ndarray = np.asarray(res.expected_freq, dtype=float)
+chi2, p, dof, expected_raw = stats.chi2_contingency(table_np, correction=False)
+expected = np.asarray(expected_raw, dtype=float)
 
-print("chi2 =", chi2, "p =", p, "dof =", dof)
+print("[Chi-square test of independence]")
+print(f"  chi2 = {chi2:.4f}, dof = {dof}, p = {p:.4g}, alpha = {alpha}")
 
-# Effect size: Cramer's V (safe computation)
-n: float = float(table_np.sum())
-r: int
-c: int
+if p < alpha:
+    print("  → Reject H0: evidence of association (not independent).")
+else:
+    print("  → Fail to reject H0: insufficient evidence of association.")
+    print("  (Note) With small samples, power may be low—inspect effect size too.")
+
+# Effect size: Cramer's V
+n = float(table_np.sum())
 r, c = table_np.shape
-k: int = min(r - 1, c - 1)
-cramers_v: float = float('nan')
-if n > 0 and k > 0:
-    cramers_v = float(np.sqrt(chi2 / (n * k)))
-print("Cramer's V =", cramers_v)
+k = min(r - 1, c - 1)
+cramers_v = float(np.sqrt(chi2 / (n * k))) if (n > 0 and k > 0) else float("nan")
+print(f"  Effect size Cramer's V = {cramers_v:.4f}")
+print("    (rule of thumb) for 2×2: V≈0.10 small, 0.30 medium, 0.50 large (context-dependent)")
 
-# ── Post-hoc: Adjusted standardized residuals ──
-# Rule of thumb: |residual| > 2 may indicate a meaningful deviation from expectation
+# Post-hoc: adjusted standardized residuals
 row_sum = table_np.sum(axis=1, keepdims=True)
 col_sum = table_np.sum(axis=0, keepdims=True)
-row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum, dtype=float)
-col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum, dtype=float)
+row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum)
+col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum)
 
 den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
 with np.errstate(divide="ignore", invalid="ignore"):
-    resid: np.ndarray = (table_np - expected) / den
+    resid = (table_np - expected) / den
 
-# ── Readable output: labels + observed/expected/residuals ──
-import pandas as pd
-
-# Preserve labels if `table` is a DataFrame; otherwise create a labeled DataFrame
 table_df = table if hasattr(table, "index") else pd.DataFrame(table_np)
 
 rows = []
@@ -791,16 +974,17 @@ for i, rlab in enumerate(table_df.index):
 out = pd.DataFrame(rows)
 out_sorted = out.sort_values("AdjResid", key=lambda s: s.abs(), ascending=False)
 
-print()\nprint("[Post-hoc] Adjusted standardized residuals summary (Top 10 by |residual|)")
+print("\\n[Post-hoc] Adjusted standardized residuals (Top 10 by |z|)")
 print(out_sorted.head(10).to_string(index=False))
 
 sig = out_sorted[out_sorted["Flag(|z|>2)"]]
-print()\nprint("[Post-hoc] Cells with |AdjResid| > 2 (potentially meaningful)")
-if len(sig) == 0:
+print("\\n[Post-hoc] Cells with |z| > 2 (potentially notable)")
+if sig.empty:
     print("(none)")
 else:
     print(sig.to_string(index=False))
-"""
+
+print("\nTip: p-value answers 'is there association?', residuals show 'which cells drive it', and V summarizes 'how large'.")"""
     ),
     "chi2_ind_cochran_check": (
         "Cochran check (independence)",
@@ -830,205 +1014,130 @@ print("cochran_ok =", bool(cochran_ok))
     "chi2_ind_mc": (
         "Chi-square independence (Monte Carlo)",
         "When Cochran’s rule is violated, approximate p-value via Monte Carlo.",
-        """
-import numpy as np
+        """import numpy as np
 from scipy import stats
 
-# table : contingency table of observed counts (R×C)
-# table = np.array([[...], [...], ...])
+alpha = 0.05  # TODO
 
+# table : contingency table (observed counts) array (R×C)
+# table = np.array([[...], [...], ...], dtype=int)
+
+table = np.asarray(table, dtype=float)
 chi2_obs, p_asym, dof, expected = stats.chi2_contingency(table, correction=False)
 
-# ── Monte Carlo approximation under H0 (independence) ──
-# Template using fixed row totals and multinomial draws by column proportions.
+# ── Monte Carlo p-value under H0 (independence) ──
+# NOTE: This is an approximation that preserves margins only approximately.
 rng = np.random.default_rng(0)
-n_sim = 100_000
+n_sim = 100_000  # TODO
 count_extreme = 0
 
-table_np = np.asarray(table)
+row_sums = table.sum(axis=1)
+col_sums = table.sum(axis=0)
+n = table.sum()
 
-row_sums = table_np.sum(axis=1)
-col_sums = table_np.sum(axis=0)
-n = float(table_np.sum())
-p_cols = (col_sums / n) if n > 0 else np.full_like(col_sums, 1.0 / len(col_sums), dtype=float)
-
+col_probs = col_sums / n
 for _ in range(n_sim):
-    sim = np.vstack([rng.multinomial(int(rs), p_cols) for rs in row_sums])
+    sim = np.vstack([rng.multinomial(int(rs), col_probs) for rs in row_sums]).astype(float)
     chi2_s, _, _, _ = stats.chi2_contingency(sim, correction=False)
     count_extreme += (chi2_s >= chi2_obs)
 
 p_mc = count_extreme / n_sim
-print("Primary p-value (Monte Carlo approx) =", p_mc)
-print("(Optional) chi2 =", chi2_obs, "dof =", dof, "asymptotic p =", p_asym)
 
-# Effect size (reference): Cramer's V
+print(f"[Chi-square Independence] (Monte Carlo) chi2 = {chi2_obs:.4g}, dof = {dof}, p_mc = {p_mc:.4g}, alpha = {alpha}")
+print(f"  (ref) asymptotic p = {p_asym:.4g}")
+
+if p_mc < alpha:
+    print("→ Decision: reject H0 (evidence of association)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence of association)")
+
+# Effect size: Cramer's V
 r, c = table.shape
 k = min(r - 1, c - 1)
-cramers_v = np.sqrt(chi2_obs / (n * k))
-print("Cramer's V =", cramers_v)
+cramers_v = np.sqrt(chi2_obs / (n * k)) if (n > 0 and k > 0) else np.nan
+print(f"[Effect size] Cramer's V = {cramers_v:.4f}  (rule of thumb: 0.1 small, 0.3 medium, 0.5 large; context-dependent)")
 
-        """
+# Cell-level hints: adjusted standardized residuals
+row_prop = row_sums[:, None] / n
+col_prop = col_sums[None, :] / n
+den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide='ignore', invalid='ignore'):
+    adj_resid = (table - expected) / den
+print("[Post-hoc hint] Cells with |residual| > 2 may contribute strongly to chi-square.")"""
     ),
     "chi2_ind_collapse": (
         "Collapse categories then Chi-square independence",
         "Template for collapsing categories, then running chi-square independence test.",
-        """
-import numpy as np
+        """import numpy as np
 from scipy import stats
 
-# Re-run independence test after collapsing categories (template).
-# Construct `table` for the collapsed categories.
-#
-# TODO INPUT:
-# table = np.array([[...], [...], ...], dtype=int)
+alpha = 0.05  # TODO
 
-table_np = np.asarray(table)
-res = stats.chi2_contingency(table_np, correction=False)
+# table : contingency table (observed counts) array (R×C)
+table_np = np.asarray(table, dtype=float)
 
-chi2 = float(res.statistic)
-p = float(res.pvalue)
-dof = int(res.dof)
-expected = np.asarray(res.expected_freq, dtype=float)
+chi2, p, dof, expected = stats.chi2_contingency(table_np, correction=False)
+expected_flat = expected.ravel()
+pct_lt5 = np.mean(expected_flat < 5) * 100
 
-print("chi2 =", chi2, "p =", p, "dof =", dof)
+print(f"[Chi-square Independence] chi2 = {chi2:.4g}, dof = {dof}, p = {p:.4g}, alpha = {alpha}")
+print(f"[Assumption check] % expected < 5 = {pct_lt5:.1f}% (rule of thumb: <=20%; context-dependent)")
 
-# Effect size: Cramer's V (safe computation)
-n = float(table_np.sum())
+if p < alpha:
+    print("→ Decision: reject H0 (evidence of association)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
+
+print("\\n[Collapsing sparse categories]")
+print("- If many expected counts are small, consider collapsing rare categories in a substantively valid way and re-run the test.")
+
+n = table_np.sum()
 r, c = table_np.shape
 k = min(r - 1, c - 1)
-cramers_v = np.nan
-if n > 0 and k > 0:
-    cramers_v = float(np.sqrt(chi2 / (n * k)))
-print("Cramer's V =", cramers_v)
-
-# ── Post-hoc: Adjusted standardized residuals ──
-# Rule of thumb: |residual| > 2 may indicate a meaningful deviation from expectation
-row_sum = table_np.sum(axis=1, keepdims=True)
-col_sum = table_np.sum(axis=0, keepdims=True)
-row_prop = row_sum / n if n > 0 else np.zeros_like(row_sum, dtype=float)
-col_prop = col_sum / n if n > 0 else np.zeros_like(col_sum, dtype=float)
-
-den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
-with np.errstate(divide="ignore", invalid="ignore"):
-    resid = (table_np - expected) / den
-
-for i in range(r):
-    for j in range(c):
-        val = float(resid[i, j]) if np.isfinite(resid[i, j]) else float("nan")
-        flag = "meaningful (≈sig)" if np.isfinite(val) and abs(val) > 2 else ""
-        print(f"cell[{i},{j}] resid = {val:.3f} {flag}")
-        """
+cramers_v = np.sqrt(chi2 / (n * k)) if (n > 0 and k > 0) else np.nan
+print(f"[Effect size] Cramer's V = {cramers_v:.4f}")"""
     ),
     "ffh_exact": (
         "Fisher–Freeman–Halton (FFH) exact test",
         "Exact test for R×C tables (availability depends on SciPy version).",
-        """
+        """# Fisher–Freeman–Halton (FFH) exact test for RxC tables (exact alternative to chi-square)
+# NOTE: SciPy does not provide FFH exact for general RxC tables.
+# Practical alternatives: permutation / Monte Carlo p-value for chi-square statistic.
+
 import numpy as np
 from scipy import stats
-import pandas as pd
 
-# table : contingency table of observed counts (R×C)
-# table = np.array([[...], [...], ...], dtype=int)
+alpha = 0.05  # TODO
 
-table_np = np.asarray(table, dtype=float)
-r, c = table_np.shape
-N = float(table_np.sum())
+table = np.asarray(table, dtype=int)
 
-# ── Effect size: Cramér's V (reporting-friendly) ──
-# Even if you use an exact/Monte Carlo p-value, Cramér's V is typically computed
-# from the chi-square statistic of the same table (reporting convention).
-chi2, p_asym, dof, expected = stats.chi2_contingency(table_np, correction=False)
+chi2_obs, p_asym, dof, expected = stats.chi2_contingency(table, correction=False)
+
+rng = np.random.default_rng(0)
+n_sim = 50_000  # TODO
+n = int(table.sum())
+p_exp = (expected / expected.sum()).ravel()
+count_extreme = 0
+
+for _ in range(n_sim):
+    sim = rng.multinomial(n, p_exp).reshape(table.shape)
+    chi2_s, _, _, _ = stats.chi2_contingency(sim, correction=False)
+    count_extreme += (chi2_s >= chi2_obs)
+
+p_mc = count_extreme / n_sim
+
+print(f"[FFH exact (practical approx)] chi2 = {chi2_obs:.4g}, dof = {dof}, p_mc = {p_mc:.4g}, alpha = {alpha}")
+print("  (note) FFH exact for RxC is library-dependent; MC/permutation reporting is common in practice.")
+
+if p_mc < alpha:
+    print("→ Decision: reject H0 (evidence of association)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
+
+r, c = table.shape
 k = min(r - 1, c - 1)
-cramers_v = np.sqrt(chi2 / (N * k)) if (N > 0 and k > 0) else np.nan
-print("Cramér's V =", float(cramers_v))
-
-# ── Fisher–Freeman–Halton (FFH) exact p-value ──
-# SciPy (as of many versions) supports Fisher exact only for 2×2.
-# If your SciPy supports RxC FFH in the future, this may work; otherwise we fall back.
-try:
-    res = stats.fisher_exact(table_np)
-    # If supported, res may be (statistic, pvalue) or a SignificanceResult
-    p_exact = getattr(res, "pvalue", res[1])
-    print("FFH exact p =", float(p_exact))
-except Exception as e:
-    print("FFH exact test not available in this SciPy version.")
-    print("Fallback: Monte Carlo approximation under H0 (independence).")
-
-    rng = np.random.default_rng(0)
-    n_sim = 100_000
-    chi2_obs = float(chi2)
-
-    row_sums = table_np.sum(axis=1).astype(int)
-    col_sums = table_np.sum(axis=0)
-    p_cols = (col_sums / col_sums.sum()) if col_sums.sum() > 0 else np.full(c, 1.0/c)
-
-    count_extreme = 0
-    for _ in range(n_sim):
-        sim = np.vstack([rng.multinomial(int(rs), p_cols) for rs in row_sums])
-        chi2_sim, _, _, _ = stats.chi2_contingency(sim, correction=False)
-        count_extreme += (chi2_sim >= chi2_obs)
-
-    p_mc = count_extreme / n_sim
-    print("Monte Carlo p (approx) =", float(p_mc))
-
-# ── Post-hoc 1: adjusted standardized residuals (cell diagnostics) ──
-row_sum = table_np.sum(axis=1, keepdims=True)
-col_sum = table_np.sum(axis=0, keepdims=True)
-row_prop = row_sum / N if N > 0 else np.zeros_like(row_sum)
-col_prop = col_sum / N if N > 0 else np.zeros_like(col_sum)
-
-den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
-with np.errstate(divide="ignore", invalid="ignore"):
-    adj_resid = (table_np - expected) / den
-
-# Labeled output: keep index/columns if input is a DataFrame
-table_df = table if isinstance(table, pd.DataFrame) else pd.DataFrame(table_np)
-out = pd.DataFrame(adj_resid, index=table_df.index, columns=table_df.columns)
-print("
-[Post-hoc] Adjusted standardized residuals (z-like)")
-print(out.round(3))
-
-# ── Post-hoc 2 (optional): pairwise Fisher exact (only when C==2) ──
-# If your table is (R×2), you can compare rows pairwise using 2×2 Fisher tests
-# with multiple-comparisons correction.
-if c == 2 and r >= 3:
-    from itertools import combinations
-
-    def holm_adjust(pvals):
-        pvals = np.asarray(pvals, dtype=float)
-        m = len(pvals)
-        order = np.argsort(pvals)
-        adj = np.empty(m, dtype=float)
-        prev = 0.0
-        for k_i, idx in enumerate(order):
-            rank = k_i + 1
-            val = (m - rank + 1) * pvals[idx]
-            val = max(val, prev)  # enforce monotonicity
-            prev = val
-            adj[idx] = min(1.0, val)
-        return adj
-
-    rows = []
-    pvals = []
-    pairs = list(combinations(range(r), 2))
-    for i, j in pairs:
-        sub = np.vstack([table_np[i, :], table_np[j, :]]).astype(int)
-        _, p = stats.fisher_exact(sub)
-        pvals.append(p)
-        rows.append({
-            "row_i": table_df.index[i] if "table_df" in locals() else i,
-            "row_j": table_df.index[j] if "table_df" in locals() else j,
-            "p_fisher": float(p)
-        })
-
-    adj = holm_adjust(pvals)
-    for rr, p_adj in zip(rows, adj):
-        rr["p_holm"] = float(p_adj)
-
-    df = pd.DataFrame(rows)
-    print("\n[Post-hoc] Pairwise Fisher exact tests between rows (Holm-adjusted)")
-    print(df.sort_values("p_holm").to_string(index=False))
-"""
+cramers_v = np.sqrt(chi2_obs / (n * k)) if (n > 0 and k > 0) else np.nan
+print(f"[Effect size] Cramer's V = {cramers_v:.4f}")"""
 
     ),
 
@@ -1039,42 +1148,39 @@ if c == 2 and r >= 3:
 from scipy import stats
 from statsmodels.stats.contingency_tables import Table2x2
 
-# 2×2 contingency table (observed counts)
+__COMMON_SETTINGS__
+
+# 2×2 contingency table
 # table = np.array([[a, b],
-#                   [c, d]])
+#                   [c, d]], dtype=int)
+table = np.asarray(table, dtype=float)
 
-# Fisher exact test (2×2)
-oddsratio, p_value = stats.fisher_exact(table, alternative="two-sided")  # or "less"/"greater"
-print("OR (scipy) =", oddsratio, "p =", p_value)
+oddsratio, p_value = stats.fisher_exact(table, alternative=alternative)
+print(f"[Fisher exact (2×2)] OR = {oddsratio:.4g}, p = {p_value:.4g}, alpha = {alpha}")
 
-# Exact/conditional CI for OR (statsmodels)
+if p_value < alpha:
+    print("→ Decision: reject H0 (evidence of association)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
+
 t22 = Table2x2(table)
-ci_low, ci_high = t22.oddsratio_confint(alpha=0.05, method="exact")
-print("OR 95% CI (exact) =", (ci_low, ci_high))
+ci_low, ci_high = t22.oddsratio_confint()
+print(f"[CI] OR 95% CI = ({ci_low:.4g}, {ci_high:.4g})")
+print("  - If the CI excludes 1, OR is (roughly) different from 1.")
 
-# ── Effect size: Phi coefficient (φ) ──
-# For 2×2 tables, φ is equivalent to Cramér's V.
-# φ = sqrt(chi2 / N)
-chi2, p_chi2, dof, expected = stats.chi2_contingency(table, correction=False)
-N = table.sum()
-phi = np.sqrt(chi2 / N) if N > 0 else np.nan
-print("Phi (φ) =", float(phi))
+chi2, p_chi, dof, exp = stats.chi2_contingency(table, correction=False)
+n = table.sum()
+phi = np.sqrt(chi2 / n) if n > 0 else np.nan
+print(f"[Effect size] φ(phi) = {phi:.4f}  (rule of thumb: 0.1 small, 0.3 medium, 0.5 large)")
 
-# (Optional) Cell-level check: adjusted standardized residuals
 row_sum = table.sum(axis=1, keepdims=True)
 col_sum = table.sum(axis=0, keepdims=True)
-row_prop = row_sum / N if N > 0 else np.zeros_like(row_sum, dtype=float)
-col_prop = col_sum / N if N > 0 else np.zeros_like(col_sum, dtype=float)
-
-den = np.sqrt(expected * (1.0 - row_prop) * (1.0 - col_prop))
-with np.errstate(divide="ignore", invalid="ignore"):
-    adj_resid = (table - expected) / den
-print("Adjusted standardized residuals:\n", adj_resid)
-
-# Post-hoc note:
-# - For a 2×2 table, Fisher exact is already the single comparison;
-#   there is no standard 'post-hoc' beyond reporting OR/CI, φ, and residuals.
-"""
+row_prop = row_sum / n
+col_prop = col_sum / n
+den = np.sqrt(exp * (1.0 - row_prop) * (1.0 - col_prop))
+with np.errstate(divide='ignore', invalid='ignore'):
+    adj_resid = (table - exp) / den
+print("[Residual hint] Cells with |residual| > 2 may deviate strongly from expectation.")"""
 
     ),
     "mcnemar": (
@@ -1112,53 +1218,75 @@ else:
     "pearsonr": (
         "Pearson correlation",
         "Linear association between two continuous variables (approx normal).",
-        """from scipy import stats
+        """
+from scipy import stats
 import numpy as np
 
-r, p_value = stats.pearsonr(x, y)
-print("r =", r, "p =", p_value)
-
-# Power (approx)
-from statsmodels.stats.power import NormalIndPower
-effect = r / np.sqrt(1 - r**2)
-power = NormalIndPower().power(effect_size=effect, nobs1=len(x), alpha=0.05)
-print("Power (approx) =", power)
-
-# CI for r (Fisher z)
 alpha = 0.05  # TODO
+
+# x, y: 1D arrays (same length)
+r, p_value = stats.pearsonr(x, y)
+
+print("[Pearson correlation]")
+print(f"  r = {r:.4f}, p = {p_value:.4g}, alpha = {alpha}")
+if p_value < alpha:
+    print("  → Reject H0: evidence of a non-zero *linear* association.")
+else:
+    print("  → Fail to reject H0: insufficient evidence of a non-zero linear association.")
+
+# CI for r (Fisher z transform)
 n = len(x)
 z = np.arctanh(r)
-se = 1 / np.sqrt(n - 3)
+se = 1 / np.sqrt(n - 3)  # valid when n>3
 zcrit = stats.norm.ppf(1 - alpha/2)
-r_low, r_high = np.tanh(z - zcrit*se), np.tanh(z + zcrit*se)
-print(f"{int((1-alpha)*100)}% CI for r =", (r_low, r_high))
+ci_low = np.tanh(z - zcrit*se)
+ci_high = np.tanh(z + zcrit*se)
+print(f"  {int((1-alpha)*100)}% CI for r = [{ci_low:.4f}, {ci_high:.4f}]")
+print("  Interpretation tip: CI excluding 0 aligns with p < alpha.")
+
+# Power (approx; treat correlation as effect size)
+from statsmodels.stats.power import NormalIndPower
+effect = r / np.sqrt(max(1e-12, 1 - r**2))
+power = NormalIndPower().power(effect_size=effect, nobs1=n, alpha=alpha)
+print(f"  Power (approx) = {power:.3f}")
+
 """
     ),
     "spearmanr": (
         "Spearman correlation",
         "Rank-based association for non-normal continuous or ordinal variables.",
-        """from scipy import stats
+        """
+from scipy import stats
 import numpy as np
 
-rho, p_value = stats.spearmanr(x, y)
-print("rho =", rho, "p =", p_value)
-
-# Power note:
-# - No standard closed-form power; use simulation if needed.
-
-# CI note (bootstrap)
 alpha = 0.05  # TODO
-B = 2000       # TODO bootstrap resamples
+
+# x, y: 1D arrays (same length)
+rho, p_value = stats.spearmanr(x, y)
+
+print("[Spearman rank correlation]")
+print(f"  rho = {rho:.4f}, p = {p_value:.4g}, alpha = {alpha}")
+if p_value < alpha:
+    print("  → Reject H0: evidence of a monotonic association.")
+else:
+    print("  → Fail to reject H0: insufficient evidence of a monotonic association.")
+
+# Practical note:
+print("  Tip: Spearman is robust to outliers and non-linear but monotonic trends.")
+
+# Optional: bootstrap CI for rho (recommended)
+B = 2000  # TODO
 rng = np.random.default_rng(0)
+vals = []
+x = np.asarray(x); y = np.asarray(y)
 n = len(x)
-boot = []
 for _ in range(B):
-    idx = rng.integers(0, n, n)
-    rho_b, _ = stats.spearmanr(np.array(x)[idx], np.array(y)[idx])
-    boot.append(rho_b)
-boot = np.sort(np.array(boot))
-ci = (np.quantile(boot, alpha/2), np.quantile(boot, 1-alpha/2))
-print(f"{int((1-alpha)*100)}% bootstrap CI for rho =", ci)
+    idx = rng.integers(0, n, size=n)
+    rr, _ = stats.spearmanr(x[idx], y[idx])
+    vals.append(rr)
+ci = (np.percentile(vals, 2.5), np.percentile(vals, 97.5))
+print(f"  95% bootstrap CI for rho = [{ci[0]:.4f}, {ci[1]:.4f}]")
+
 """
     ),
 
@@ -1166,52 +1294,126 @@ print(f"{int((1-alpha)*100)}% bootstrap CI for rho =", ci)
     "ols": (
         "Linear regression (OLS)",
         "Continuous outcome with one or more predictors.",
-        """import statsmodels.api as sm
+        """import numpy as np
+import pandas as pd
+import statsmodels.api as sm
 
-# y : outcome, X : predictors (2D)
-X = sm.add_constant(X)
-model = sm.OLS(y, X).fit()
-print(model.summary())
+alpha = 0.05  # TODO
 
-# CIs:
-# ci = model.conf_int(alpha=0.05)  # TODO alpha
-# print(ci)
-"""
+# y: (n,), X: (n, p)
+X_ = sm.add_constant(X, has_constant="add")
+model = sm.OLS(y, X_).fit()
+
+print("[OLS Regression] Key summary")
+print(f"R^2 = {model.rsquared:.4f}, Adj R^2 = {model.rsquared_adj:.4f}, F-test p = {model.f_pvalue:.4g}")
+
+if model.f_pvalue < alpha:
+    print("→ Decision: model is significant overall (at least one coefficient likely non-zero)")
+else:
+    print("→ Decision: model not significant overall (insufficient evidence)")
+
+params = model.params
+pvals = model.pvalues
+ci = model.conf_int(alpha=alpha)
+
+out = pd.DataFrame({
+    "coef": params,
+    "p": pvals,
+    f"CI{int((1-alpha)*100)}_low": ci[0],
+    f"CI{int((1-alpha)*100)}_high": ci[1],
+})
+out["CI_comment"] = np.where((out[f"CI{int((1-alpha)*100)}_low"] > 0) | (out[f"CI{int((1-alpha)*100)}_high"] < 0),
+                            "CI excludes 0 (likely significant)", "CI includes 0 (uncertain)")
+print("\\n[Coefficients]")
+print(out.to_string())
+
+print("\\n[Interpretation tips]")
+print("- The sign of coef indicates direction of association, holding others fixed.")
+print("- p-values/CIs quantify uncertainty.")
+print("- Also check assumptions: residual diagnostics, heteroscedasticity, influential points.")"""
     ),
     "logit": (
         "Logistic regression",
         "Binary outcome with one or more predictors.",
-        """import numpy as np
+        """
+import numpy as np
+import pandas as pd
 import statsmodels.api as sm
 
-X = sm.add_constant(X)
-model = sm.Logit(y, X).fit()
-print(model.summary())
+alpha = 0.05  # TODO
 
-# Odds ratios (OR) and 95% CI
-ci = model.conf_int(alpha=0.05)
-or_ci = np.exp(ci)
-or_ = np.exp(model.params)
-print("OR =", or_)
-print("OR 95% CI =", or_ci)
+# y: binary (0/1), X: predictors without intercept
+X = np.asarray(X, dtype=float)
+y = np.asarray(y, dtype=float)
+
+X_ = sm.add_constant(X)
+model = sm.Logit(y, X_).fit(disp=False)
+
+print("[Logistic regression (Logit)]")
+print(f"  n = {len(y)}, alpha = {alpha}")
+print(f"  LL = {model.llf:.3f}, LL-Null = {model.llnull:.3f}, Pseudo R^2 (McFadden) = {1 - model.llf/model.llnull:.4f}")
+
+tbl = pd.DataFrame({
+    "coef(log-odds)": model.params,
+    "se": model.bse,
+    "z": model.tvalues,
+    "p": model.pvalues,
+})
+ci = model.conf_int(alpha=alpha)
+tbl["ci_low"] = ci[0]
+tbl["ci_high"] = ci[1]
+
+# Odds ratios
+tbl["OR"] = np.exp(tbl["coef(log-odds)"])
+tbl["OR_ci_low"] = np.exp(tbl["ci_low"])
+tbl["OR_ci_high"] = np.exp(tbl["ci_high"])
+tbl["reject"] = tbl["p"] < alpha
+
+print("\\n[Coefficients (log-odds) + Odds Ratios]")
+print(tbl.to_string())
+
+print("\nTip: OR CI excluding 1 corresponds to p < alpha (approximately).")
+
 """
     ),
     "poisson_glm": (
         "Poisson regression (GLM)",
         "Count outcome; consider Negative Binomial if overdispersed.",
-        """import numpy as np
+        """
+import numpy as np
+import pandas as pd
 import statsmodels.api as sm
 
-X = sm.add_constant(X)
-model = sm.GLM(y, X, family=sm.families.Poisson()).fit()
-print(model.summary())
+alpha = 0.05  # TODO
 
-# Incidence rate ratios (IRR) and 95% CI
-ci = model.conf_int(alpha=0.05)
-irr_ci = np.exp(ci)
-irr_ = np.exp(model.params)
-print("IRR =", irr_)
-print("IRR 95% CI =", irr_ci)
+# y: count (non-negative int), X: predictors without intercept
+X = np.asarray(X, dtype=float)
+y = np.asarray(y, dtype=float)
+
+X_ = sm.add_constant(X)
+model = sm.GLM(y, X_, family=sm.families.Poisson()).fit()
+
+print("[Poisson GLM]")
+print(f"  n = {len(y)}, alpha = {alpha}")
+print(f"  Deviance = {model.deviance:.3f}, Pearson chi2 = {model.pearson_chi2:.3f}")
+print("  Tip: if overdispersion is large (Pearson chi2 / df >> 1), consider Negative Binomial.")
+
+tbl = pd.DataFrame({
+    "coef(log-rate)": model.params,
+    "se": model.bse,
+    "z": model.tvalues,
+    "p": model.pvalues,
+})
+ci = model.conf_int(alpha=alpha)
+tbl["ci_low"] = ci[0]; tbl["ci_high"] = ci[1]
+tbl["RateRatio"] = np.exp(tbl["coef(log-rate)"])
+tbl["RR_ci_low"] = np.exp(tbl["ci_low"])
+tbl["RR_ci_high"] = np.exp(tbl["ci_high"])
+tbl["reject"] = tbl["p"] < alpha
+
+print("\\n[Coefficients + Rate Ratios]")
+print(tbl.to_string())
+
 """
     ),
     # One-sample z-test for mean (known sigma)
@@ -1258,29 +1460,28 @@ print("CI for mean =", ci)
     "prop_1sample_ztest": (
         "One-sample proportion z-test",
         "Compare an observed proportion to a hypothesized p0 (e.g., conversion rate vs benchmark).",
-        """from statsmodels.stats.proportion import proportions_ztest, proportion_confint, proportion_effectsize
+        """import numpy as np
+from statsmodels.stats.proportion import proportions_ztest, proportion_confint
 
-# successes / trials
-count = 42   # TODO: number of successes
-nobs = 100   # TODO: total trials
-p0 = 0.30    # TODO: hypothesized proportion under H0
+__COMMON_SETTINGS__
 
-z_stat, p_value = proportions_ztest(count=count, nobs=nobs, value=p0, alternative="two-sided")
-print("z =", z_stat, "p =", p_value)
+# count: successes, nobs: trials, p0: null proportion
+stat, p_value = proportions_ztest(count=count, nobs=nobs, value=p0, alternative=alternative)
 
-# Estimate and CI for proportion (Wilson is a good default)
-phat = count / nobs
-ci_low, ci_high = proportion_confint(count, nobs, alpha=0.05, method="wilson")
-print("p̂ =", phat, "95% CI =", (ci_low, ci_high))
+print(f"[One-sample proportion z-test] z = {stat:.4g}, p = {p_value:.4g}, alpha = {alpha}, H0: p = {p0}")
 
-# Effect size: Cohen's h
-h = proportion_effectsize(phat, p0)
-print("Cohen's h =", h)
+if p_value < alpha:
+    print("→ Decision: reject H0 (proportion differs from p0)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
 
-# Power note:
-# For power planning, two-sample proportion tests can use NormalIndPower (see the two-sample snippet).
-# One-sample proportion power is typically planned with a normal approximation or specialized routines.
-"""
+ci_low, ci_high = proportion_confint(count=count, nobs=nobs, alpha=alpha, method="wilson")
+print(f"[CI] {int((1-alpha)*100)}% CI for p (Wilson) = ({ci_low:.4f}, {ci_high:.4f})")
+print("  - If the CI excludes p0, p is (roughly) different from p0.")
+
+p_hat = count / nobs
+h = 2*np.arcsin(np.sqrt(p_hat)) - 2*np.arcsin(np.sqrt(p0))
+print(f"[Effect size] Cohen's h = {h:.4f}  (0.2 small, 0.5 medium, 0.8 large)")"""
     ),
 
     # Proportions: two-sample z-test (+ power via NormalIndPower)
@@ -1333,37 +1534,45 @@ print("Power (given nobs1,nobs2) =", power)
     "chi2_gof": (
         "Chi-square goodness-of-fit",
         "Test whether observed counts match a specified expected distribution (one categorical variable).",
-        """
-import numpy as np
+        """import numpy as np
 from scipy import stats
+
+alpha = 0.05  # TODO
 
 # Observed counts
 # observed = np.array([o1, o2, o3, ...])
 
-# Expected probabilities (sum=1) or expected counts (sum=n)
+# Expected probabilities (sum=1) OR expected counts (sum=n)
 # expected_probs = np.array([...])  # sum=1
 # expected = expected_probs * observed.sum()
 
-n = observed.sum()
+observed = np.asarray(observed, dtype=float)
+expected = np.asarray(expected, dtype=float)
+n = float(observed.sum())
 
-# ── Chi-square goodness-of-fit (asymptotic) ──
 chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
-df = len(observed) - 1
-print("chi2 =", chi2, "df =", df, "p =", p)
+df = int(len(observed) - 1)
 
-# Effect size (recommended): Cohen's w (GOF)
-w = np.sqrt(chi2 / n)
-print("Cohen's w =", w)
+print("[Chi-square goodness-of-fit]")
+print(f"  chi2 = {chi2:.4f}, df = {df}, p = {p:.4g}, alpha = {alpha}")
 
-# ── Post-hoc: standardized residuals ──
-# standardized residual = (observed - expected) / sqrt(expected)
-# Rule of thumb: |residual| > 2 may indicate meaningful deviation
+if p < alpha:
+    print("  → Reject H0: observed distribution differs from the expected distribution.")
+else:
+    print("  → Fail to reject H0: insufficient evidence of a difference from expected.")
+    print("  (Note) With small samples, power may be low—inspect effect size/residuals too.")
+
+# Effect size: Cohen's w
+w = float(np.sqrt(chi2 / n)) if n > 0 else float("nan")
+print(f"  Effect size Cohen's w = {w:.4f}")
+print("    (rule of thumb) w≈0.10 small, 0.30 medium, 0.50 large (context-dependent)")
+
+# Post-hoc: standardized residuals
 std_residuals = (observed - expected) / np.sqrt(expected)
-for i, r in enumerate(std_residuals):
-    flag = "possibly meaningful" if abs(r) > 2 else ""
-    print(f"category[{i}] std resid = {r:.3f} {flag}")
-
-"""
+print("\\n[Post-hoc] Standardized residuals (|z|>2 may be notable)")
+for i, z in enumerate(std_residuals):
+    flag = " |z|>2" if np.isfinite(z) and abs(z) > 2 else ""
+    print(f"  category[{i}] z = {float(z):.3f}{flag}")"""
     ),
     "chi2_gof_cochran_check": (
         "Cochran check (GOF)",
@@ -1394,81 +1603,78 @@ print("cochran_ok =", bool(cochran_ok))
     "chi2_gof_mc": (
         "Chi-square GOF (Monte Carlo)",
         "When Cochran’s rule is violated, approximate p-value via Monte Carlo simulation.",
-        """
-import numpy as np
+        """import numpy as np
 from scipy import stats
 
-# Observed counts
-# observed = np.array([o1, o2, o3, ...])
+alpha = 0.05  # TODO
 
-# Expected probabilities (sum=1)
-# expected_probs = np.array([...])  # sum=1
+obs = np.asarray(observed, dtype=float)
+exp = np.asarray(expected, dtype=float)
+if np.isclose(exp.sum(), 1.0):
+    exp = exp * obs.sum()
 
-n = int(observed.sum())
-expected = expected_probs * n
+chi2_obs = ((obs - exp) ** 2 / exp).sum()
+df = len(obs) - 1
 
-# Observed chi-square statistic (for reference)
-chi2_obs, p_asym = stats.chisquare(f_obs=observed, f_exp=expected)
-df = len(observed) - 1
-
-# ── Monte Carlo simulation under H0 (multinomial) ──
+p_exp = exp / exp.sum()
 rng = np.random.default_rng(0)
-n_sim = 100_000  # TODO: number of simulations
+n_sim = 100_000  # TODO
 count_extreme = 0
+n = int(obs.sum())
+
 for _ in range(n_sim):
-    samp = rng.multinomial(n, expected_probs)
-    chi2_s, _ = stats.chisquare(f_obs=samp, f_exp=expected)
+    sim = rng.multinomial(n, p_exp).astype(float)
+    chi2_s = ((sim - exp) ** 2 / exp).sum()
     count_extreme += (chi2_s >= chi2_obs)
 
 p_mc = count_extreme / n_sim
-print("Primary p-value (Monte Carlo) =", p_mc)
-print("(Optional) chi2 =", chi2_obs, "df =", df, "asymptotic p =", p_asym)
 
-# Effect size: Cohen's w (GOF)
-w = np.sqrt(chi2_obs / n)
-print("Cohen's w =", w)
+print(f"[Chi-square GOF] (Monte Carlo) chi2 = {chi2_obs:.4g}, df = {df}, p_mc = {p_mc:.4g}, alpha = {alpha}")
 
-# Post-hoc: standardized residuals (print only |r| > 2)
-std_residuals = (observed - expected) / np.sqrt(expected)
-for i, r in enumerate(std_residuals):
-    if abs(r) > 2:
-        print(f"category[{i}] std resid = {r:.3f}")
+if p_mc < alpha:
+    print("→ Decision: reject H0 (observed distribution differs from expected)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
 
-        """
+w = np.sqrt(chi2_obs / n) if n > 0 else np.nan
+print(f"[Effect size] Cohen's w = {w:.4f}  (rule of thumb: 0.1 small, 0.3 medium, 0.5 large)")
+
+with np.errstate(divide='ignore', invalid='ignore'):
+    resid = (obs - exp) / np.sqrt(exp)
+print("[Hint] Categories with large |residual| may drive the discrepancy.")"""
     ),
     "chi2_gof_collapse": (
         "Collapse categories then Chi-square GOF",
         "Template for collapsing categories, then running GOF chi-square.",
-        """
-import numpy as np
+        """import numpy as np
 from scipy import stats
 
-# Re-run GOF after collapsing categories (template).
-# Construct `observed` and `expected_probs` for the collapsed categories.
+alpha = 0.05  # TODO
 
-# Example: collapse 6 categories into (0-2) and (3-5):
-# observed_raw = np.array([o1, o2, o3, o4, o5, o6])
-# observed = np.array([observed_raw[:3].sum(), observed_raw[3:].sum()])
-#
-# expected_probs_raw = np.ones(6) / 6
-# expected_probs = np.array([expected_probs_raw[:3].sum(), expected_probs_raw[3:].sum()])
+obs = np.asarray(observed, dtype=float)
+exp = np.asarray(expected, dtype=float)
+if np.isclose(exp.sum(), 1.0):
+    exp = exp * obs.sum()
 
-n = int(observed.sum())
-expected = expected_probs * n
+pct_lt5 = np.mean(exp < 5) * 100
 
-chi2, p = stats.chisquare(f_obs=observed, f_exp=expected)
-df = len(observed) - 1
-print("chi2 =", chi2, "df =", df, "p =", p)
+chi2, p = stats.chisquare(f_obs=obs, f_exp=exp)
+df = len(obs) - 1
 
-w = np.sqrt(chi2 / n)
-print("Cohen's w =", w)
+print(f"[Chi-square GOF] chi2 = {chi2:.4g}, df = {df}, p = {p:.4g}, alpha = {alpha}")
+print(f"[Assumption check] % expected < 5 = {pct_lt5:.1f}% (consider collapsing sparse categories)")
 
-std_residuals = (observed - expected) / np.sqrt(expected)
-for i, r in enumerate(std_residuals):
-    flag = "possibly meaningful" if abs(r) > 2 else ""
-    print(f"category[{i}] std resid = {r:.3f} {flag}")
+if p < alpha:
+    print("→ Decision: reject H0 (distribution differs from expected)")
+else:
+    print("→ Decision: fail to reject H0 (insufficient evidence)")
 
-        """
+print("\\n[Collapsing sparse categories]")
+print("- If many expected counts are small, consider collapsing categories in a substantively valid way and re-run.")
+
+n = obs.sum()
+w = np.sqrt(chi2 / n) if n > 0 else np.nan
+print(f"[Effect size] Cohen's w = {w:.4f}")"""
     ),
 
 
@@ -2090,6 +2296,75 @@ print("Q =", stat, "p =", p_value)
             result["final_tests"] = ["poisson_glm"]
             return result
 
+    
+    # ---------------- Assoc / Correlation ----------------
+    if goal == "assoc":
+        atype = ask_choice(
+            "What type of association/correlation do you want?",
+            [
+                ("cont_cont", "Continuous ↔ Continuous (correlation)"),
+                ("cat_cat", "Categorical ↔ Categorical (contingency / association)"),
+            ],
+        )
+
+        if atype == "cont_cont":
+            method = ask_choice(
+                "Which correlation method?",
+                [
+                    ("pearsonr", "Pearson (linear; assumes roughly normal; sensitive to outliers)"),
+                    ("spearmanr", "Spearman (rank-based; more robust to non-normality/outliers)"),
+                ],
+            )
+            show_snippet(method)
+            result["final_tests"] = [method]
+            result["notes"].append("Correlation does NOT imply causation. Always inspect a scatter plot and outliers/nonlinearity.")
+            return result
+
+        if atype == "cat_cat":
+            show_snippet("chi2_contingency")
+            result["final_tests"] = ["chi2_contingency"]
+            result["notes"].append("If chi-square is significant, inspect adjusted standardized residuals to see which cells drive the association.")
+            return result
+
+    # ---------------- Model / Prediction ----------------
+    if goal == "model":
+        my = ask_choice(
+            "What is the outcome (Y) type?",
+            [
+                ("continuous", "Continuous (linear regression)"),
+                ("binary", "Binary (logistic regression)"),
+                ("count", "Count (Poisson / negative binomial etc.)"),
+                ("ordinal", "Ordinal (ordered regression)"),
+            ],
+        )
+
+        if my == "continuous":
+            show_snippet("ols")
+            result["final_tests"] = ["ols"]
+            return result
+        if my == "binary":
+            show_snippet("logit")
+            result["final_tests"] = ["logit"]
+            return result
+        if my == "count":
+            show_snippet("poisson_glm")
+            result["final_tests"] = ["poisson_glm"]
+            return result
+        if my == "ordinal":
+            print_node(
+                "Ordered regression (OrderedModel)",
+                "Use when Y is ordinal (ordered categories) and you have predictors.",
+                """from statsmodels.miscmodels.ordinal_model import OrderedModel
+
+# y: ordered categories (e.g., 1..5), X: predictors
+model = OrderedModel(y, X, distr="logit")  # or "probit"
+res = model.fit(method="bfgs")
+print(res.summary())
+""",
+            )
+            result["final_tests"] = ["ordered_model"]
+            return result
+
     result["notes"].append("No matching path (unexpected).")
     return result
 
@@ -2194,12 +2469,12 @@ def run_smoketest() -> None:
             failures.append((k, title, str(e)))
 
     if failures:
-        print("\n[SMOKETEST] Some snippets failed to compile:")
+        print("\\n[SMOKETEST] Some snippets failed to compile:")
         for k, title, msg in failures:
             print(f" - {k} ({title}): {msg}")
         raise SystemExit(1)
 
-    print(f"\n[SMOKETEST] OK: compiled {len(ASSUMPTION_SNIPPETS) + len(TEST_SNIPPETS)} snippets without syntax errors.")
+    print(f"\\n[SMOKETEST] OK: compiled {len(ASSUMPTION_SNIPPETS) + len(TEST_SNIPPETS)} snippets without syntax errors.")
 
 def run_fuzz(iterations: int = 200, seed: int = 1234) -> None:
     """Automatically traverse the decision tree with valid choices to catch runtime crashes."""
