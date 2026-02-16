@@ -5,9 +5,6 @@ All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
 ---
-All notable changes to this project will be documented in this file.
-
----
 
 ## [1.3.1] - 2026-02-15
 
