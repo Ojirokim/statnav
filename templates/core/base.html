@@ -14,8 +14,8 @@
 
     <!-- Language toggle (custom view: clears progress + switches language) -->
     <nav class="lang">
-      <a class="langbtn" href="{% url 'switch_lang' 'en' %}">EN</a>
-      <a class="langbtn" href="{% url 'switch_lang' 'ko' %}">KR</a>
+      <a class="langbtn" href="{% url 'switch_lang' 'en' %}?next={{ request.path }}">EN</a>
+      <a class="langbtn" href="{% url 'switch_lang' 'ko' %}?next={{ request.path }}">KR</a>
     </nav>
   </header>
 

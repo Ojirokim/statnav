@@ -239,31 +239,40 @@ def results(request):
     })
 
 from django.conf import settings
+from django.http import HttpResponseRedirect
 from django.utils import translation
-from django.shortcuts import redirect
 from django.views.decorators.http import require_http_methods
 
 @require_http_methods(["GET"])
 def switch_lang(request, lang_code):
     lang_code = (lang_code or "").lower()
 
-    # UI -> Django mapping
+    # Map UI codes to Django codes
     if lang_code == "kr":
         lang_code = "ko"
 
-    # allow only supported languages
-    supported = {code for code, _ in settings.LANGUAGES}
+    # Allow only supported languages
+    supported = {code for code, _ in getattr(settings, "LANGUAGES", [("en", "English"), ("ko", "Korean")])}
     if lang_code not in supported:
-        lang_code = settings.LANGUAGE_CODE
+        lang_code = (getattr(settings, "LANGUAGE_CODE", "en") or "en").split("-")[0]
 
+    # Activate for this request
     translation.activate(lang_code)
-    request.session[translation.LANGUAGE_SESSION_KEY] = lang_code
 
-    # reset wizard progress so it rebuilds cleanly in new language
-    request.session["progress_snippets"] = []
-    request.session["progress_inline"] = []
-    request.session["checkpoints"] = []
-    request.session.pop("final_result", None)
-    request.session.modified = True
+    # (Optional) Clear progress safely if session exists
+    if hasattr(request, "session"):
+        request.session["progress_snippets"] = []
+        request.session["progress_inline"] = []
+        request.session["checkpoints"] = []
+        request.session.pop("final_result", None)
+        request.session.modified = True
 
-    return redirect("wizard")
+    # Redirect back to where user was
+    next_url = request.GET.get("next") or "/wizard/"
+    resp = HttpResponseRedirect(next_url)
+
+    # Persist language via cookie (LocaleMiddleware reads this)
+    cookie_name = getattr(settings, "LANGUAGE_COOKIE_NAME", "django_language")
+    resp.set_cookie(cookie_name, lang_code)
+
+    return resp
