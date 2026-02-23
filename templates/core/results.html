@@ -1,0 +1,80 @@
+{% extends "core/base.html" %}
+{% block content %}
+
+<section class="card">
+  <h1 class="title">FINAL RECOMMENDATION</h1>
+
+  <div class="resultbox">
+    <pre class="code"><code>{{ result|pprint }}</code></pre>
+  </div>
+
+  <div class="actions">
+    <a class="btn" href="{% url 'start' %}">Start over</a>
+  </div>
+</section>
+
+<section class="card">
+  <h2 class="subtitle">Assumption checks</h2>
+
+  {% if inline_cards %}
+    {% for s in inline_cards %}
+      <div class="snippet">
+        <div class="snippet-head">
+          <div>
+            <div class="snippet-title">{{ s.title }}</div>
+            <div class="snippet-desc">{{ s.desc }}</div>
+          </div>
+          {% if s.code %}
+            <button class="copybtn" data-copy-target="r-inline-{{ forloop.counter }}">Copy</button>
+          {% endif %}
+        </div>
+        {% if s.code %}
+          <pre class="code" id="r-inline-{{ forloop.counter }}"><code>{{ s.code }}</code></pre>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% for s in snippet_cards %}
+    <div class="snippet">
+      <div class="snippet-head">
+        <div>
+          <div class="snippet-title">{{ s.title }}</div>
+          <div class="snippet-desc">{{ s.desc }}</div>
+        </div>
+        {% if s.code %}
+          <button class="copybtn" data-copy-target="r-code-{{ forloop.counter }}">Copy</button>
+        {% endif %}
+      </div>
+      {% if s.code %}
+        <pre class="code" id="r-code-{{ forloop.counter }}"><code>{{ s.code }}</code></pre>
+      {% endif %}
+    </div>
+  {% empty %}
+    <p class="muted">No snippets recorded.</p>
+  {% endfor %}
+</section>
+
+<section class="card">
+  <h2 class="subtitle">Test snippet(s)</h2>
+  {% for s in final_test_cards %}
+    <div class="snippet">
+      <div class="snippet-head">
+        <div>
+          <div class="snippet-title">{{ s.title }}</div>
+          <div class="snippet-desc">{{ s.desc }}</div>
+        </div>
+        {% if s.code %}
+          <button class="copybtn" data-copy-target="final-{{ forloop.counter }}">Copy</button>
+        {% endif %}
+      </div>
+      {% if s.code %}
+        <pre class="code" id="final-{{ forloop.counter }}"><code>{{ s.code }}</code></pre>
+      {% endif %}
+    </div>
+  {% empty %}
+    <p class="muted">No final test snippet found.</p>
+  {% endfor %}
+</section>
+
+{% endblock %}

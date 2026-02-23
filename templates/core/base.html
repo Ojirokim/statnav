@@ -1,0 +1,28 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>StatNav</title>
+  <link rel="stylesheet" href="{% static 'core/app.css' %}">
+  <script defer src="{% static 'core/app.js' %}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">StatNav</div>
+
+    <!-- Language toggle (works after we add /i18n/ in config/urls.py) -->
+    <form class="lang" action="/i18n/setlang/" method="post">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button class="langbtn" name="language" value="en" type="submit">EN</button>
+      <button class="langbtn" name="language" value="ko" type="submit">KR</button>
+    </form>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,128 @@
+{% extends "core/base.html" %}
+{% block content %}
+
+<div class="grid-4">
+
+  <!-- Column 1: Intro / Checklist -->
+  <aside class="card">
+    {% load static %}
+    <img src="{% static 'core/cat.jpg' %}" alt="Cat" class="cat">
+    <h2 class="subtitle">대화형 통계 검정 선택기</h2>
+
+    <p class="muted">
+      질문에 답해 주세요. 적절한 통계 검정 방법과 코드 예시를 안내합니다.
+      모든 진행 경로는 최종 권장사항 요약으로 마무리되며,
+      이후에는 처음부터 다시 시작할 수 있습니다.
+    </p>
+
+    <hr class="divider">
+
+    <h3 class="subtitle">확인 사항</h3>
+
+    <ul class="checklist">
+      <li>연구 설계와 무작위 배정 여부</li>
+      <li>관측값의 독립성</li>
+      <li>결측치 발생 메커니즘</li>
+      <li>대립가설 방향성은 데이터 보기 전 결정했는지</li>
+      <li>동등성/차이/비열등성 구분</li>
+      <li>다중 예측변수 및 상호작용 고려</li>
+      <li>통계적 유의성 + 실질적 의미 모두 고려</li>
+    </ul>
+  </aside>
+
+
+  <!-- Column 2: Question -->
+  <section class="card">
+    <h1 class="title">{{ q.prompt }}</h1>
+
+    <form method="post" class="choices">
+      {% csrf_token %}
+      <input type="hidden" name="key" value="{{ q.key }}">
+      <input type="hidden" name="prompt" value="{{ q.prompt }}">
+      <input type="hidden" id="picked-label" name="label" value="">
+
+      {% for c in q.choices %}
+        <button class="choice" type="submit"
+                name="value" value="{{ c.value }}"
+                onclick="document.getElementById('picked-label').value='{{ c.label|escapejs }}'">
+          {{ c.label }}
+        </button>
+      {% endfor %}
+    </form>
+
+    <div class="actions">
+      <a class="btn" href="{% url 'back' %}">Back</a>
+      <a class="btn" href="{% url 'start' %}">Restart</a>
+    </div>
+  </section>
+
+
+  <!-- Column 3: Selections -->
+  <aside class="card">
+    <h2 class="subtitle">Your selections</h2>
+
+    {% if request.session.answer_history %}
+      <div class="summary">
+        {% for a in request.session.answer_history %}
+          <div class="summary-row">
+            <div class="summary-q">{{ a.prompt }}</div>
+            <div class="summary-a">{{ a.label }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No answers yet.</p>
+    {% endif %}
+  </aside>
+
+
+  <!-- Column 4: Snippets -->
+  <aside class="card snippet-column">
+    <h2 class="subtitle">Snippets</h2>
+
+    {% if inline_cards %}
+      {% for s in inline_cards %}
+        <div class="snippet">
+          <div class="snippet-head">
+            <div>
+              <div class="snippet-title">{{ s.title }}</div>
+              <div class="snippet-desc">{{ s.desc }}</div>
+            </div>
+            {% if s.code %}
+              <button class="copybtn" data-copy-target="inline-{{ forloop.counter }}">Copy</button>
+            {% endif %}
+          </div>
+          {% if s.code %}
+            <pre class="code" id="inline-{{ forloop.counter }}"><code>{{ s.code }}</code></pre>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if snippet_cards %}
+      {% for s in snippet_cards %}
+        <div class="snippet">
+          <div class="snippet-head">
+            <div>
+              <div class="snippet-title">{{ s.title }}</div>
+              <div class="snippet-desc">{{ s.desc }}</div>
+            </div>
+            {% if s.code %}
+              <button class="copybtn" data-copy-target="code-{{ forloop.counter }}">Copy</button>
+            {% endif %}
+          </div>
+          {% if s.code %}
+            <pre class="code" id="code-{{ forloop.counter }}"><code>{{ s.code }}</code></pre>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if not inline_cards and not snippet_cards %}
+      <p class="muted">No snippets yet.</p>
+    {% endif %}
+  </aside>
+
+</div>
+
+{% endblock %}

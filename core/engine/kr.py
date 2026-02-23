@@ -77,24 +77,29 @@ COMMON_SETTINGS = """alpha = 0.05  # TODO
 alternative = \"two-sided\"  # \"two-sided\" | \"greater\" | \"less\"
 """
 
+from .runner import NeedAnswer, Choice, SessionIO, make_key
 
+_io: SessionIO | None = None
+
+def bind_session(io: SessionIO) -> None:
+    global _io
+    _io = io
 
 # ----------------------------
 # Helpers
 # ----------------------------
 
-def ask_choice(prompt: str, choices: List[Tuple[str, str]]) -> str:
-    print("\n" + prompt)
-    for i, (_, label) in enumerate(choices, start=1):
-        print(f"  {i}. {label}")
-    while True:
-        raw = input("번호를 선택하세요: ").strip()
-        if raw.isdigit():
-            idx = int(raw)
-            if 1 <= idx <= len(choices):
-                return choices[idx - 1][0]
-        print("잘못된 선택입니다. 다시 시도하세요.")
-
+def ask_choice(prompt: str, choices):
+    assert _io is not None
+    key = make_key(prompt, choices)
+    existing = _io.get_answer(key)
+    if existing is not None:
+        return existing
+    raise NeedAnswer(
+        key=key,
+        prompt=prompt,
+        choices=[Choice(value=v, label=lbl) for v, lbl in choices],
+    )
 
 
 def ensure_alternative_selected() -> str:
@@ -112,24 +117,12 @@ def ensure_alternative_selected() -> str:
     return CURRENT_ALT
 
 def ask_yes_no(prompt: str) -> bool:
-    return ask_choice(prompt, [("y", "예"), ("n", "아니오")]) == "y"
+    val = ask_choice(prompt, [("y", "예"), ("n", "아니오")])
+    return val == "y"
 
 
 def print_node(title: str, detail: str = "", code: str = "") -> None:
     assert _io is not None
-
-    # ✅ Filter out static intro/checklist that we now show in the left column
-    skip_titles = {
-        "대화형 통계 검정 선택기",
-        "확인 사항",
-        "Statistical Test Selector",
-        "Notes / Checklist",
-        "Checklist",
-        "Important Notes",
-    }
-    if (title or "").strip() in skip_titles:
-        return
-
     if code or detail:
         _io.push_inline(title, detail or "", code or "")
 
@@ -1677,29 +1670,9 @@ EFFECT_GUIDE: Dict[str, str] = {
 
 }
 
-def show_snippet(key: str) -> None:
-    if key not in TEST_SNIPPETS:
-        print_node("내부 오류", f"TEST_SNIPPETS 키가 없습니다: {key}")
-        return
-    title, detail, code = TEST_SNIPPETS[key]
-
-    # --- Apply the user's alternative choice (two-sided / less / greater) ---
-    # If the snippet uses an `alternative=` argument, define a shared variable and wire it in.
-    # This keeps the printed code consistent with the decision-tree choice.
-    global CURRENT_ALT
-    if "alternative" in code:
-        ensure_alternative_selected()
-        code = code.replace('alternative="two-sided"', 'alternative=alternative')
-        code = code.replace("alternative='two-sided'", "alternative=alternative")
-        code = code.replace('alternative="greater"', 'alternative=alternative')
-        code = code.replace("alternative='greater'", "alternative=alternative")
-        code = code.replace('alternative="less"', 'alternative=alternative')
-        code = code.replace("alternative='less'", "alternative=alternative")
-        code = f'alternative = "{CURRENT_ALT}"  # "two-sided" | "greater" | "less"\n' + code
-
-    print_node(title, detail, code)
-    if key in EFFECT_GUIDE:
-        print_node("효과크기 해석 기준", EFFECT_GUIDE[key], "")
+def show_snippet(snippet_key: str) -> None:
+    assert _io is not None
+    _io.push_snippet(snippet_key)
 
 
 def show_assumption(key: str) -> None:
@@ -1718,6 +1691,25 @@ def show_assumption(key: str) -> None:
 
 def run_once() -> Dict[str, Any]:
     """의사결정 트리를 한 번 수행하고 요약 딕셔너리를 반환합니다."""
+    print_node(
+        "대화형 통계 검정 선택기",
+        "질문에 답해 주세요. 그러면 적절한 통계 검정 방법과 코드 예시를 안내해 드립니다.\n"
+        "모든 진행 경로는 최종 권장사항 요약으로 마무리되며, 이후에는 처음부터 다시 시작할 수 있습니다."
+    )
+
+    print_node(
+        "확인 사항",
+        "이 도구는 자주 사용되는 통계 검정을 선택하는 데 도움을 줍니다.\n"
+        "하지만 통계적 사고(추론)를 대체하지는 않습니다.\n\n"
+        "항상 다음을 고려하세요:\n"
+        "1) 연구 설계와 무작위 배정 여부\n"
+        "2) 관측값의 독립성\n"
+        "3) 결측치 발생 메커니즘\n"
+        "4) 대립가설의 방향성은 데이터를 보기 전에 결정했는지 여부\n"
+        "5) 동등성 검정인지, 차이 검정인지, 비열등성 검정인지 구분\n"
+        "6) 다중 예측변수와 상호작용 효과 고려 여부\n"
+        "7) 통계적 유의성뿐 아니라 실질적(임상적) 유의성도 고려"
+    )
 
     result: Dict[str, Any] = {"final_tests": [], "notes": []}
     goal = ask_choice(

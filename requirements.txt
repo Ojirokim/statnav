@@ -4,3 +4,8 @@ statsmodels
 matplotlib
 pingouin
 scikit-posthocs
+Django>=6.0,<7.0
+gunicorn
+whitenoise
+python-dotenv
+dj-database-url

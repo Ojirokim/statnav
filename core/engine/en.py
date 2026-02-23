@@ -75,23 +75,29 @@ alternative = \"two-sided\"  # \"two-sided\" | \"greater\" | \"less\"
 import argparse
 import sys
 
+from .runner import NeedAnswer, Choice, SessionIO, make_key
+
+_io: SessionIO | None = None
+
+def bind_session(io: SessionIO) -> None:
+    global _io
+    _io = io
 
 # ----------------------------
 # Helpers
 # ----------------------------
 
-def ask_choice(prompt: str, choices: List[Tuple[str, str]]) -> str:
-    print("\n" + prompt)
-    for i, (_, label) in enumerate(choices, start=1):
-        print(f"  {i}. {label}")
-    while True:
-        raw = input("Select a number: ").strip()
-        if raw.isdigit():
-            idx = int(raw)
-            if 1 <= idx <= len(choices):
-                return choices[idx - 1][0]
-        print("Invalid selection. Try again.")
-
+def ask_choice(prompt: str, choices):
+    assert _io is not None
+    key = make_key(prompt, choices)
+    existing = _io.get_answer(key)
+    if existing is not None:
+        return existing
+    raise NeedAnswer(
+        key=key,
+        prompt=prompt,
+        choices=[Choice(value=v, label=lbl) for v, lbl in choices],
+    )
 
 
 def ensure_alternative_selected() -> str:
@@ -109,24 +115,12 @@ def ensure_alternative_selected() -> str:
     return CURRENT_ALT
 
 def ask_yes_no(prompt: str) -> bool:
-    return ask_choice(prompt, [("y", "Yes"), ("n", "No")]) == "y"
+    val = ask_choice(prompt, [("y", "Yes"), ("n", "No")])
+    return val == "y"
 
 
 def print_node(title: str, detail: str = "", code: str = "") -> None:
     assert _io is not None
-
-    # ✅ Filter out static intro/checklist that we now show in the left column
-    skip_titles = {
-        "대화형 통계 검정 선택기",
-        "확인 사항",
-        "Statistical Test Selector",
-        "Notes / Checklist",
-        "Checklist",
-        "Important Notes",
-    }
-    if (title or "").strip() in skip_titles:
-        return
-
     if code or detail:
         _io.push_inline(title, detail or "", code or "")
 
@@ -1768,28 +1762,9 @@ EFFECT_GUIDE: Dict[str, str] = {
     "cliffs_delta": "Cliff's delta (δ, -1~1): dominance/probability-of-superiority effect size.\nHeuristic (absolute): |δ|<0.147 negligible, <0.33 small, <0.474 medium, otherwise large.\nSometimes used alongside (or instead of) rank-biserial r.",
 
 }
-def show_snippet(key: str) -> None:
-    if key not in TEST_SNIPPETS:
-        print_node("INTERNAL ERROR", f"Missing TEST_SNIPPETS key: {key}")
-        return
-    title, detail, code = TEST_SNIPPETS[key]
-
-    # --- Apply the user's alternative choice (two-sided / less / greater) ---
-    global CURRENT_ALT
-    if "alternative" in code:
-        ensure_alternative_selected()
-        code = code.replace('alternative="two-sided"', 'alternative=alternative')
-        code = code.replace("alternative='two-sided'", "alternative=alternative")
-        code = code.replace('alternative="greater"', 'alternative=alternative')
-        code = code.replace("alternative='greater'", "alternative=alternative")
-        code = code.replace('alternative="less"', 'alternative=alternative')
-        code = code.replace("alternative='less'", "alternative=alternative")
-        code = f'alternative = "{CURRENT_ALT}"  # "two-sided" | "greater" | "less"\n' + code
-
-    print_node(title, detail, code)
-    if key in EFFECT_GUIDE:
-        print_node("Effect size interpretation (rule of thumb)", EFFECT_GUIDE[key], "")
-
+def show_snippet(snippet_key: str) -> None:
+    assert _io is not None
+    _io.push_snippet(snippet_key)
 
 def show_assumption(key: str) -> None:
     if key not in ASSUMPTION_SNIPPETS:
@@ -1807,6 +1782,25 @@ def show_assumption(key: str) -> None:
 
 def run_once() -> Dict[str, Any]:
     """Run one traversal; return summary dict."""
+    print_node(
+        "Interactive Statistical Test Selector",
+        "Answer the questions. You'll get recommended test(s) and code snippets.\n"
+        "Every path ends with a FINAL RECOMMENDATION summary, then you can restart."
+    )
+
+    print_node(
+        "Reality Check",
+        "This tool helps select common tests.\n"
+        "It does NOT replace statistical reasoning.\n\n"
+        "Always consider:\n"
+        "1) Study design and randomization\n"
+        "2) Independence of observations\n"
+        "3) Missing data mechanism\n"
+        "4) Alternative direction decided BEFORE seeing data\n"
+        "5) Equivalence vs difference vs non-inferiority\n"
+        "6) Multiple predictors and interactions\n"
+        "7) Practical vs statistical significance"
+    )
 
     result: Dict[str, Any] = {"final_tests": [], "notes": []}
 
