@@ -238,19 +238,39 @@ def results(request):
         "final_test_cards": final_test_cards,
     })
 
+from django.conf import settings
+from django.utils import translation
+from django.shortcuts import redirect
+
 @require_http_methods(["GET"])
 def switch_lang(request, lang_code):
-    # Activate the new language
+    # Map UI codes to Django codes
+    lang_code = (lang_code or "").lower()
+    if lang_code in ("kr", "ko-kr"):
+        lang_code = "ko"
+    elif lang_code in ("en-us", "en-gb"):
+        lang_code = "en"
+
+    # Only allow supported languages
+    supported = {code for code, _ in getattr(settings, "LANGUAGES", [("en", "English"), ("ko", "Korean")])}
+    if lang_code not in supported:
+        lang_code = settings.LANGUAGE_CODE.split("-")[0] if getattr(settings, "LANGUAGE_CODE", "en") else "en"
+
+    # Activate for this request
     translation.activate(lang_code)
-    request.session[translation.LANGUAGE_SESSION_KEY] = lang_code
 
-    # Clear snippet-related session data so it rebuilds cleanly
-    request.session["progress_snippets"] = []
-    request.session["progress_inline"] = []
-    request.session["checkpoints"] = []
-    request.session.pop("final_result", None)
+    # Persist language (session if available, plus cookie)
+    if hasattr(request, "session"):
+        request.session[translation.LANGUAGE_SESSION_KEY] = lang_code
 
-    request.session.modified = True
+        # Clear snippet-related session data so it rebuilds cleanly
+        request.session["progress_snippets"] = []
+        request.session["progress_inline"] = []
+        request.session["checkpoints"] = []
+        request.session.pop("final_result", None)
 
-    # Redirect back to wizard
-    return redirect("wizard")
+        request.session.modified = True
+
+    resp = redirect(request.GET.get("next", "wizard"))
+    resp.set_cookie(getattr(settings, "LANGUAGE_COOKIE_NAME", "django_language"), lang_code)
+    return resp
