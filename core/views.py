@@ -1,7 +1,8 @@
 from django.shortcuts import render, redirect
 from django.views.decorators.http import require_http_methods
 from django.utils.translation import get_language
-
+from django.utils import translation
+from django.http import HttpResponseRedirect
 from .engine.runner import SessionIO, NeedAnswer
 from .engine import en, kr
 
@@ -62,18 +63,26 @@ def _pop_checkpoint(session):
 def _is_intro_card(card: dict) -> bool:
     """
     Detect intro/checklist cards so they don't appear in Snippets column.
-    Works for both EN and KR versions.
+    Works for both EN and KR versions and is case-robust.
     """
-    title = (card.get("title") or "").lower()
-    desc = (card.get("desc") or "").lower()
+    title = (card.get("title") or "")
+    desc = (card.get("desc") or "")
 
-    # If it's clearly an intro block
+    title_l = title.lower()
+    desc_l = desc.lower()
+
     intro_keywords = [
+        # EN
         "interactive statistical test selector",
         "statistical test selector",
         "reality check",
         "answer the questions",
         "does not replace statistical reasoning",
+        "does not replace statistical reasoning",
+        "does not replace statistical reasoning",
+        "does not replace",  # extra catch-all for that paragraph
+
+        # KR
         "대화형 통계 검정 선택기",
         "확인 사항",
         "질문에 답해 주세요",
@@ -81,7 +90,8 @@ def _is_intro_card(card: dict) -> bool:
     ]
 
     for kw in intro_keywords:
-        if kw in title or kw in desc:
+        kw_l = kw.lower()
+        if kw_l in title_l or kw_l in desc_l:
             return True
 
     return False
@@ -227,3 +237,20 @@ def results(request):
         "inline_cards": inline_cards,               # any inline notes you want to show
         "final_test_cards": final_test_cards,
     })
+
+@require_http_methods(["GET"])
+def switch_lang(request, lang_code):
+    # Activate the new language
+    translation.activate(lang_code)
+    request.session[translation.LANGUAGE_SESSION_KEY] = lang_code
+
+    # Clear snippet-related session data so it rebuilds cleanly
+    request.session["progress_snippets"] = []
+    request.session["progress_inline"] = []
+    request.session["checkpoints"] = []
+    request.session.pop("final_result", None)
+
+    request.session.modified = True
+
+    # Redirect back to wizard
+    return redirect("wizard")
