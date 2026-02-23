@@ -61,33 +61,30 @@ def _pop_checkpoint(session):
 
 def _is_intro_card(card: dict) -> bool:
     """
-    Returns True if this card is the intro/checklist content we moved to the left column.
-    Works for both inline_cards (dicts with title/desc/code) and snippet_cards bundles.
+    Detect intro/checklist cards so they don't appear in Snippets column.
+    Works for both EN and KR versions.
     """
-    title = (card.get("title") or "").strip()
-    desc = (card.get("desc") or "").strip()
+    title = (card.get("title") or "").lower()
+    desc = (card.get("desc") or "").lower()
 
-    # Titles we want to remove from Snippets column
-    bad_titles = {
+    # If it's clearly an intro block
+    intro_keywords = [
+        "interactive statistical test selector",
+        "statistical test selector",
+        "reality check",
+        "answer the questions",
+        "does not replace statistical reasoning",
         "대화형 통계 검정 선택기",
         "확인 사항",
-        "Statistical Test Selector",
-        "Notes",
-        "Important Notes",
-        "Checklist",
-    }
-
-    if title in bad_titles:
-        return True
-
-    # Extra safety: if the description contains these phrases, treat as intro/checklist
-    bad_phrases = [
         "질문에 답해 주세요",
         "이 도구는 자주 사용되는 통계 검정을 선택하는 데 도움",
-        "does not replace statistical thinking",
-        "answer the questions",
     ]
-    return any(p in desc for p in bad_phrases)
+
+    for kw in intro_keywords:
+        if kw in title or kw in desc:
+            return True
+
+    return False
 
 def _unique_keep_order(items):
     seen = set()
